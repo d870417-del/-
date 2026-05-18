@@ -41,6 +41,7 @@ const compressImageBase64 = (base64Str, maxWidth = 600, maxHeight = 600) => {
 // ─── 遠端即時同步 Firebase Firestore Hook ───────────────────────────────────
 const useCloudState = (key, initial) => {
   const [state, setState] = useState(initial);
+  const [loading, setLoading] = useState(true); // 🌟 新增：用來記錄是不是還在載入
 
   useEffect(() => {
     const safeKey = key.replace(/:/g, '_');
@@ -53,8 +54,10 @@ const useCloudState = (key, initial) => {
       } else {
         setDoc(docRef, { value: initial }).catch(err => console.error(err));
       }
+      setLoading(false); // 🌟 關鍵：只要 Firebase 第一次回應了，就關閉 loading！
     }, (error) => {
       console.error("Firebase 監聽失敗:", error);
+      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -71,7 +74,7 @@ const useCloudState = (key, initial) => {
     });
   }, [key]);
 
-  return [state, set];
+  return [state, set, loading]; // 🌟 記得把 loading 傳出去
 };
 
 // ─── 輔助元件：地圖嵌入 (Map Embed) ──────────────────────────────────────────
@@ -159,7 +162,7 @@ export function MemberProvider({ children }) {
   const [currentMember, setCurrentMember] = useStorageState(`${appId}:member`, null);
   
   // 🌐 以下全部無痛改成雲端同步 Hook，實現 6 人即時共享！
-  const [allMembers, setAllMembers] = useCloudState(`${appId}:allMembers`, []);
+  const [allMembers, setAllMembers, isMembersLoading] = useCloudState(`${appId}:allMembers`, []);
   const [tripDates, setTripDates] = useCloudState(`${appId}:tripDates`, ['待安排', '06/06', '06/07', '06/08', '06/09', '06/10', '06/11', '06/12', '06/13', '06/14']);
   const [walletDates, setWalletDates] = useCloudState(`${appId}:walletDates`, []);
   const [trips, setTrips] = useCloudState(`${appId}:trips`, [{ id: 1, title: '釜山東京雙城遊', date: '2026-06-06' }]);
@@ -254,6 +257,7 @@ export function MemberProvider({ children }) {
   const value = {
     currentMember, allMembers, setAllMembers, login, logout, updateMember,
     createInitialAdmin, initName, setInitName,
+    isMembersLoading, // 🌟 傳出全域載入狀態
     globalItinerary, setGlobalItinerary,
     tripDates, setTripDates, walletDates, setWalletDates,
     trips, setTrips, flights, setFlights, stays, setStays,
@@ -398,13 +402,11 @@ const getCategoryColor = (cat) => {
   };
   return map[cat] || map['其他'];
 };
-
 // ─── HomePage ─────────────────────────────────────────────────────────────────
 const HomePage = ({ onNavigate }) => {
   const { trips, setTrips, flights, setFlights, stays, setStays, globalItinerary, sharedWallet, currentMember } = useMember();
   const [modal, setModal] = useState({ type: null, data: null });
   const [confirmDel, setConfirmDel] = useState(null);
-  const isAdmin = currentMember?.role === '管理員';
 
   const walletBalances = useMemo(() => {
     const totals = { JPY: 0, KRW: 0, TWD: 0 };
@@ -453,16 +455,16 @@ const HomePage = ({ onNavigate }) => {
       <section>
         <div className="flex justify-between items-center mb-3 px-1">
           <span className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><Clock size={14} /> 旅遊倒數計時</span>
-          {isAdmin && <button onClick={() => setModal({ type: 'trip', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>}
+          {/* 🌟 開放給所有人新增 */}
+          <button onClick={() => setModal({ type: 'trip', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>
         </div>
         {trips.map(t => (
           <div key={t.id} className="relative bg-gradient-to-br from-blue-500 to-sky-400 p-6 rounded-[2rem] text-white shadow-md mb-3 group overflow-hidden">
-            {isAdmin && (
-              <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
-                <button onClick={() => setModal({ type: 'trip', data: t })} className="p-2 bg-white/20 hover:bg-white/40 rounded-full backdrop-blur-sm transition-colors"><Edit2 size={14} /></button>
-                <button onClick={() => setConfirmDel({ fn: () => setTrips(p => p.filter(x => x.id !== t.id)) })} className="p-2 bg-white/20 hover:bg-red-500/80 rounded-full backdrop-blur-sm transition-colors"><Trash2 size={14} /></button>
-              </div>
-            )}
+            {/* 🌟 開放給所有人編輯與刪除，並加上精緻防呆文字 */}
+            <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
+              <button onClick={() => setModal({ type: 'trip', data: t })} className="p-2 bg-white/20 hover:bg-white/40 rounded-full backdrop-blur-sm transition-colors"><Edit2 size={14} /></button>
+              <button onClick={() => setConfirmDel({ title: '確認刪除旅行計畫', message: `確定要刪除「${t.title}」嗎？`, fn: () => setTrips(p => p.filter(x => x.id !== t.id)) })} className="p-2 bg-white/20 hover:bg-red-500/80 rounded-full backdrop-blur-sm transition-colors"><Trash2 size={14} /></button>
+            </div>
             <h2 className="text-sm font-bold mb-2 pr-20 opacity-90">{t.title}</h2>
             <div className="flex items-end gap-2">
               <span className="text-5xl font-black tracking-tighter">D-{getDDay(t.date)}</span>
@@ -491,16 +493,16 @@ const HomePage = ({ onNavigate }) => {
       <section className="space-y-4">
         <div className="flex justify-between items-center px-1">
           <span className="font-black text-slate-400 text-xs uppercase tracking-widest">航班資訊</span>
-          {isAdmin && <button onClick={() => setModal({ type: 'flight', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>}
+          {/* 🌟 開放給所有人新增航班 */}
+          <button onClick={() => setModal({ type: 'flight', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>
         </div>
         {flights.map(f => (
           <div key={f.id} className="relative bg-white border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm hover:shadow-md transition-shadow group">
-            {isAdmin && (
-              <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-70 hover:opacity-100 transition-opacity">
-                <button onClick={() => setModal({ type: 'flight', data: f })} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-colors border border-slate-100"><Edit2 size={14} /></button>
-                <button onClick={() => setConfirmDel({ fn: () => setFlights(p => p.filter(x => x.id !== f.id)) })} className="p-2 bg-red-50 hover:bg-red-100 rounded-full text-red-400 transition-colors border border-red-100"><Trash2 size={14} /></button>
-              </div>
-            )}
+            {/* 🌟 開放給所有人編輯與刪除航班 */}
+            <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-70 hover:opacity-100 transition-opacity">
+              <button onClick={() => setModal({ type: 'flight', data: f })} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-colors border border-slate-100"><Edit2 size={14} /></button>
+              <button onClick={() => setConfirmDel({ title: '確認刪除航班資訊', message: `確定要刪除航班「${f.no}」嗎？`, fn: () => setFlights(p => p.filter(x => x.id !== f.id)) })} className="p-2 bg-red-50 hover:bg-red-100 rounded-full text-red-400 transition-colors border border-red-100"><Trash2 size={14} /></button>
+            </div>
             <div className="p-5">
               <div className="flex items-center gap-3 mb-4">
                 <span className="bg-blue-500 text-white px-3 py-1 rounded-full font-black text-xs tracking-widest shadow-sm">{f.no}</span>
@@ -523,16 +525,16 @@ const HomePage = ({ onNavigate }) => {
 
         <div className="flex justify-between items-center px-1 pt-2">
           <span className="font-black text-slate-400 text-xs uppercase tracking-widest">下榻飯店</span>
-          {isAdmin && <button onClick={() => setModal({ type: 'stay', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>}
+          {/* 🌟 開放給所有人新增飯店 */}
+          <button onClick={() => setModal({ type: 'stay', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>
         </div>
         {stays.map(s => (
           <div key={s.id} className="relative bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow flex items-center justify-between group">
-            {isAdmin && (
-              <div className="absolute top-2 right-2 flex gap-1.5 z-10 opacity-70 hover:opacity-100 transition-opacity">
-                <button onClick={() => setModal({ type: 'stay', data: s })} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-colors border border-slate-100"><Edit2 size={12} /></button>
-                <button onClick={() => setConfirmDel({ fn: () => setStays(p => p.filter(x => x.id !== s.id)) })} className="p-2 bg-red-50 hover:bg-red-100 rounded-full text-red-400 transition-colors border border-red-100"><Trash2 size={12} /></button>
-              </div>
-            )}
+            {/* 🌟 開放給所有人編輯與刪除飯店 */}
+            <div className="absolute top-2 right-2 flex gap-1.5 z-10 opacity-70 hover:opacity-100 transition-opacity">
+              <button onClick={() => setModal({ type: 'stay', data: s })} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-colors border border-slate-100"><Edit2 size={12} /></button>
+              <button onClick={() => setConfirmDel({ title: '確認刪除飯店資訊', message: `確定要刪除「${s.name}」嗎？`, fn: () => setStays(p => p.filter(x => x.id !== s.id)) })} className="p-2 bg-red-50 hover:bg-red-100 rounded-full text-red-400 transition-colors border border-red-100"><Trash2 size={12} /></button>
+            </div>
             <div className="flex-1 pr-14">
               <h4 className="text-base font-bold text-slate-800 mb-1.5 leading-tight">{s.name}</h4>
               <p className="text-xs font-bold text-blue-500 tracking-widest uppercase flex items-center gap-1"><Calendar size={12} /> {s.checkIn} — {s.checkOut}</p>
@@ -583,14 +585,14 @@ const HomePage = ({ onNavigate }) => {
         <button onClick={() => handleSave(modal.data)} className="w-full bg-blue-500 text-white font-black py-4 rounded-2xl shadow-md active:scale-95 mt-3 text-base hover:bg-blue-600 transition-colors">確認儲存</button>
       </Modal>
 
-      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} />
+      {/* 🌟 這裡傳入動態的 title 與 message，讓刪除提示更清晰 */}
+      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} title={confirmDel?.title} message={confirmDel?.message} />
     </div>
   );
 };
-
 // ─── TripPage ─────────────────────────────────────────────────────────────────
 const TripPage = ({ onDownload }) => {
-  const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember } = useMember();
+  const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember, allMembers } = useMember(); // 🌟 補上 allMembers
   const [selectedDate, setSelectedDate] = useState(() => getSmartDate(tripDates));
   const [viewMode, setViewMode] = useState('list');
   const [activeMapItem, setActiveMapItem] = useState(null);
@@ -709,43 +711,53 @@ const TripPage = ({ onDownload }) => {
             <div className="absolute left-[2.35rem] top-0 bottom-0 w-0.5 bg-blue-100" style={{ top: 28, bottom: 28 }} />
           )}
           <div className="space-y-4">
-            {filteredItems.map((item, idx) => (
-              <div key={item.id} className="relative flex gap-3 animate-in slide-in-from-bottom-2">
-                {selectedDate !== '待安排' && (
-                  <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
-                    <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
-                  </div>
-                )}
-                <div className={`flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group ${selectedDate === '待安排' ? 'ml-0' : ''}`}>
-                  <div className="flex items-center gap-2 mb-3 flex-wrap">
-                    {item.time && <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg font-black text-xs border border-blue-100">{item.time}</span>}
-                    <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wide ${getCategoryColor(item.category)}`}>{item.category}</span>
-                    <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setModal({ type: 'item', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
-                      <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+            {filteredItems.map((item, idx) => {
+              // 🌟 這裡修正為大括號 `{`，以便進行變數宣告邏輯
+              const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '同行隊友' };
+              
+              // 🌟 加上明文的 return ( ... JSX ... )
+              return (
+                <div key={item.id} className="relative flex gap-3 animate-in slide-in-from-bottom-2">
+                  {selectedDate !== '待安排' && (
+                    <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
+                      <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
                     </div>
-                  </div>
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="flex-1">
-                      <h4 className="text-base font-bold text-slate-800 leading-tight mb-2">{item.name}</h4>
-                      {item.note && <div className="bg-slate-50 border-l-4 border-blue-300 p-3 mb-3 text-sm text-slate-600 italic rounded-r-2xl whitespace-pre-wrap">{item.note}</div>}
-                      {item.photos?.length > 0 && (
-                        <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
-                          {item.photos.map((p, i) => (
-                            <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
-                          ))}
+                  )}
+                  <div className={`flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group ${selectedDate === '待安排' ? 'ml-0' : ''}`}>
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                      {item.time && <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg font-black text-xs border border-blue-100">{item.time}</span>}
+                      <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wide ${getCategoryColor(item.category)}`}>{item.category}</span>
+                      <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setModal({ type: 'item', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
+                        <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-1">
+                        <h4 className="text-base font-bold text-slate-800 leading-tight mb-2">{item.name}</h4>
+                        {item.note && <div className="bg-slate-50 border-l-4 border-blue-300 p-3 mb-3 text-sm text-slate-600 italic rounded-r-2xl whitespace-pre-wrap">{item.note}</div>}
+                        {item.photos?.length > 0 && (
+                          <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+                            {item.photos.map((p, i) => (
+                              <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
+                            ))}
+                          </div>
+                        )}
+                        {/* 🌟 動態顯示最新頭像與最新改名過後的名字 */}
+                        <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          <Avatar member={editor} className="w-4 h-4 rounded-md" />
+                          <span>{editor.name} 編輯</span>
                         </div>
-                      )}
-                      <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest"><UserCircle2 size={12} /> {item.lastEdited}</div>
+                      </div>
+                      {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
+                        <Navigation size={20} />
+                        <span className="text-[10px] font-bold mt-0.5">MAP</span>
+                      </a>}
                     </div>
-                    {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
-                      <Navigation size={20} />
-                      <span className="text-[10px] font-bold mt-0.5">MAP</span>
-                    </a>}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {filteredItems.length === 0 && <div className="py-20 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚未安排行程</div>}
           </div>
         </div>
@@ -774,13 +786,12 @@ const TripPage = ({ onDownload }) => {
             {tempPhotos.length < 5 && <button onClick={() => document.getElementById('trip-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
           </div>
           <input type="file" id="trip-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            // 🌟 核心修正：呼叫自動相片壓縮
             Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => p.length < 5 ? [...p, compressed] : p); }; r.readAsDataURL(file); });
           }} />
         </div>
         <button onClick={() => {
           if (!modal.data.name) return;
-          const finalData = { ...modal.data, photos: tempPhotos, lastEdited: currentMember.name, createdAt: modal.data.createdAt || Date.now() };
+          const finalData = { ...modal.data, photos: tempPhotos, editedById: currentMember.id, createdAt: modal.data.createdAt || Date.now() };
           if (modal.data.id) setGlobalItinerary(p => p.map(it => it.id === modal.data.id ? finalData : it));
           else setGlobalItinerary(p => [...p, { ...finalData, id: Date.now() }]);
           setModal({ type: null });
@@ -797,7 +808,7 @@ const TripPage = ({ onDownload }) => {
 
 // ─── FoodPage ─────────────────────────────────────────────────────────────────
 const FoodPage = ({ onDownload }) => {
-  const { globalItinerary, setGlobalItinerary, tripDates, currentMember } = useMember();
+  const { globalItinerary, setGlobalItinerary, tripDates, currentMember, allMembers } = useMember(); // 🌟 1. 這裡補上了全域的 allMembers
   const [arrangedStatus, setArrangedStatus] = useState('待安排');
   const [subTab, setSubTab] = useState('釜山');
   
@@ -895,43 +906,52 @@ const FoodPage = ({ onDownload }) => {
             <div className="absolute left-[2.35rem] top-0 bottom-0 w-0.5 bg-orange-100" style={{ top: 28, bottom: 28 }} />
           )}
           <div className="space-y-4">
-            {foodList.map((item, idx) => (
-              <div key={item.id} className={`relative flex gap-3 animate-in slide-in-from-bottom-2`}>
-                {arrangedStatus === '已安排' && (
-                  <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
-                    <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
-                  </div>
-                )}
-                <div className="flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group">
-                  <div className="flex items-center gap-2 mb-3 flex-wrap">
-                    {item.time && arrangedStatus === '已安排' && <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-black text-xs border border-orange-100">{item.time}</span>}
-                    <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-bold text-xs border border-orange-100">美食</span>
-                    <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setModal({ type: 'food', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
-                      <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+            {foodList.map((item, idx) => {
+              // 🌟 2. 這裡改為大括號，以便能安全宣告變數，並做好舊資料退回 lastEdited 的防呆
+              const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '同行隊友' };
+
+              return (
+                <div key={item.id} className={`relative flex gap-3 animate-in slide-in-from-bottom-2`}>
+                  {arrangedStatus === '已安排' && (
+                    <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
+                      <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
                     </div>
-                  </div>
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="flex-1">
-                      <h4 className="text-base font-bold text-slate-800 mb-2">{item.name}</h4>
-                      {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm text-slate-600 border-l-4 border-orange-300 italic leading-relaxed mb-3 whitespace-pre-wrap">{item.note}</p>}
-                      {item.photos?.length > 0 && (
-                        <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
-                          {item.photos.map((p, i) => (
-                            <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
-                          ))}
+                  )}
+                  <div className="flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group">
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                      {item.time && arrangedStatus === '已安排' && <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-black text-xs border border-orange-100">{item.time}</span>}
+                      <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-bold text-xs border border-orange-100">美食</span>
+                      <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setModal({ type: 'food', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
+                        <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-1">
+                        <h4 className="text-base font-bold text-slate-800 mb-2">{item.name}</h4>
+                        {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm text-slate-600 border-l-4 border-orange-300 italic leading-relaxed mb-3 whitespace-pre-wrap">{item.note}</p>}
+                        {item.photos?.length > 0 && (
+                          <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+                            {item.photos.map((p, i) => (
+                              <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
+                            ))}
+                          </div>
+                        )}
+                        {/* 🌟 3. 這裡修正成擁有精緻小頭貼＋動態最新改名名字的 UI */}
+                        <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          <Avatar member={editor} className="w-4 h-4 rounded-md" />
+                          <span>{editor.name} 編輯</span>
                         </div>
-                      )}
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest"><UserCircle2 size={12} className="inline mr-1" />{item.lastEdited}</p>
+                      </div>
+                      {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex flex-col items-center justify-center hover:bg-orange-100 active:scale-90 border border-orange-100 shrink-0 transition-colors">
+                        <Navigation size={20} />
+                        <span className="text-[10px] font-bold mt-0.5">MAP</span>
+                      </a>}
                     </div>
-                    {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex flex-col items-center justify-center hover:bg-orange-100 active:scale-90 border border-orange-100 shrink-0 transition-colors">
-                      <Navigation size={20} />
-                      <span className="text-[10px] font-bold mt-0.5">MAP</span>
-                    </a>}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {foodList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚無美食清單</div>}
           </div>
         </div>
@@ -963,13 +983,13 @@ const FoodPage = ({ onDownload }) => {
             {tempPhotos.length < 5 && <button onClick={() => document.getElementById('food-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
           </div>
           <input type="file" id="food-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            // 🌟 核心修正：呼叫自動相片壓縮
             Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => p.length < 5 ? [...p, compressed] : p); }; r.readAsDataURL(file); });
           }} />
         </div>
         <button onClick={() => {
           if (!modal.data.name) return;
-          const finalData = { ...modal.data, photos: tempPhotos, lastEdited: currentMember.name, category: '美食', createdAt: modal.data.createdAt || Date.now() };
+          // 🌟 4. 這裡把原本的 lastEdited: currentMember.name 修正成以 ID 綁定的 editedById 了！
+          const finalData = { ...modal.data, photos: tempPhotos, editedById: currentMember.id, category: '美食', createdAt: modal.data.createdAt || Date.now() };
           if (modal.data.id) setGlobalItinerary(p => p.map(it => it.id === modal.data.id ? finalData : it));
           else setGlobalItinerary(p => [...p, { ...finalData, id: Date.now() }]);
           setModal({ type: null });
@@ -996,11 +1016,10 @@ const CurrencyBadge = ({ amount, currency, type }) => {
     </span>
   );
 };
-
 // ─── ShoppingPage ─────────────────────────────────────────────────────────────
 const ShoppingPage = ({ onDownload }) => {
   const { allMembers, currentMember, shoppingList, setShoppingList, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, walletDates, setWalletDates } = useMember();
-  const [viewMemberId, setViewMemberId] = useState(currentMember?.id);
+  const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
   const [cityTab, setCityTab] = useState('釜山');
   
   const [viewMode, setViewMode] = useState('list');
@@ -1013,6 +1032,12 @@ const ShoppingPage = ({ onDownload }) => {
 
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
+
+  useEffect(() => {
+    if (currentMember?.id) {
+      setViewMemberId(currentMember.id);
+    }
+  }, [currentMember?.id]);
 
   const sortedList = useMemo(() => {
     const list = shoppingList.filter(s => s.memberId === viewMemberId && s.city === cityTab);
@@ -1034,7 +1059,7 @@ const ShoppingPage = ({ onDownload }) => {
   useEffect(() => {
     onDownload(() => () => {
       let text = `購物清單 - ${cityTab}\n\n`;
-      sortedList.forEach(i => { text += `[${i.isBought ? '已買' : '未買'}] ${i.name}\n`; if (i.price && i.price !== '0') text += `價格: ${i.price} ${i.currency}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
+      sortedList.forEach(i => { text += `[${i.isBought ? '已買' : '未買'}] ${i.name}\n`; if (i.shopName) text += `店家: ${i.shopName}\n`; if (i.price && i.price !== '0') text += `價格: ${i.price} ${i.currency}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
       downloadTextFile(text, `Shopping_${cityTab}`);
     });
   }, [sortedList, cityTab, onDownload]);
@@ -1065,7 +1090,7 @@ const ShoppingPage = ({ onDownload }) => {
       walletRecordId = Date.now();
       const record = { 
         id: walletRecordId, name: `購買: ${boughtModal.name}`, type: '支出', amount: price, currency, 
-        date: dateStr, note: boughtModal.note || '自購物清單連動', lastEdited: currentMember.name, 
+        date: dateStr, note: boughtModal.note || '自購物清單連動', editedById: currentMember?.id || '', 
         shoppingItemId: boughtModal.id, createdAt: Date.now() 
       };
       if (target === '共用錢包') setSharedWallet(p => [...p, record]);
@@ -1074,7 +1099,7 @@ const ShoppingPage = ({ onDownload }) => {
     
     setShoppingList(p => p.map(s => s.id === boughtModal.id ? {
       ...s, isBought: true, boughtAt: `${dateStr} ${timeStr}`, boughtAtMs: now.getTime(),
-      completedBy: currentMember.name, price: target === '略過不記帳' ? null : price,
+      completedById: currentMember?.id || '', price: target === '略過不記帳' ? null : price,
       currency: target === '略過不記帳' ? null : currency, recordedIn: target === '略過不記帳' ? null : target, walletRecordId
     } : s));
     setBoughtModal(null);
@@ -1087,7 +1112,7 @@ const ShoppingPage = ({ onDownload }) => {
           if (item.recordedIn === '共用錢包') setSharedWallet(p => p.filter(w => w.id !== item.walletRecordId));
           else if (item.recordedIn === '個人記帳') setPersonalWallet(p => p.filter(w => w.id !== item.walletRecordId));
         }
-        setShoppingList(p => p.map(s => s.id === item.id ? { ...s, isBought: false, completedBy: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null } : s));
+        setShoppingList(p => p.map(s => s.id === item.id ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null } : s));
       },
       title: '取消購買紀錄',
       message: '此操作將同時刪除對應的帳務記錄，確定繼續嗎？'
@@ -1120,9 +1145,16 @@ const ShoppingPage = ({ onDownload }) => {
 
       {viewMode === 'map' ? (
         <div className="mt-4 px-4 h-[calc(100vh-310px)] flex flex-col animate-in fade-in">
+          {activeMapItem?.mapUrl && (
+            <a href={activeMapItem.mapUrl} target="_blank" rel="noreferrer" className="mb-3 w-full bg-gradient-to-r from-pink-500 to-rose-500 text-white font-black py-3 px-4 rounded-2xl shadow-md text-xs flex items-center justify-center gap-2 active:scale-95 transition-transform shrink-0">
+              <Navigation size={14} strokeWidth={3} />
+              <span>開啟手機地圖精準導航 (支援 NAVER Map / Google Map)</span>
+            </a>
+          )}
+
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
             {activeMapItem ? (
-              <MapEmbed query={activeMapItem.name + ` ${cityTab}`} />
+              <MapEmbed query={(activeMapItem.shopName || activeMapItem.name) + ` ${cityTab}`} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無購物項目可顯示</div>
             )}
@@ -1136,7 +1168,7 @@ const ShoppingPage = ({ onDownload }) => {
                     <span className={`text-xs font-bold ${activeMapItem?.id === item.id ? 'text-pink-100' : 'text-slate-400'}`}>購物</span>
                   </div>
                   <h4 className={`font-bold text-sm truncate mb-1 ${item.isBought && activeMapItem?.id !== item.id ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
-                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-pink-100' : 'text-slate-400'}`}>{item.note || '無備註'}</p>
+                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-pink-100' : 'text-slate-400'}`}>{item.shopName ? `@ ${item.shopName}` : (item.note || '無備註')}</p>
                 </div>
               ))}
             </div>
@@ -1144,61 +1176,78 @@ const ShoppingPage = ({ onDownload }) => {
         </div>
       ) : (
         <div className="space-y-4 mt-5 px-4 animate-in fade-in">
-          {sortedList.map(item => (
-            <div key={item.id} className={`relative bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-all group animate-in slide-in-from-bottom-2 ${item.isBought ? 'opacity-70 bg-slate-50/50' : ''}`}>
-              <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
-                {isOwner && <button onClick={() => { setModal({ type: 'edit', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-white hover:bg-slate-100 rounded-xl transition-colors border border-slate-200"><Edit2 size={14} /></button>}
-                {isOwner && <button onClick={() => handleDeleteShoppingItem(item)} className="p-2 text-red-500 bg-white hover:bg-red-50 rounded-xl transition-colors border border-red-200"><Trash2 size={14} /></button>}
-              </div>
-              <div className="flex justify-between items-start gap-4">
-                <div className="flex-1 pr-16">
-                  <div className="flex items-center gap-3 mb-3">
-                    {isOwner ? (
-                      <button onClick={() => item.isBought ? handleUncheckBought(item) : setBoughtModal(item)} className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-colors shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-pink-200 text-pink-200 hover:bg-pink-50'}`}>
-                        {item.isBought ? <Check size={18} strokeWidth={4} /> : <Check size={18} strokeWidth={4} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
-                      </button>
-                    ) : (
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-slate-200'}`}>
-                        {item.isBought && <Check size={18} strokeWidth={4} />}
-                      </div>
-                    )}
-                    <h4 className={`text-base font-bold text-slate-800 ${item.isBought ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
-                  </div>
+          {sortedList.map(item => {
+            const creator = allMembers.find(m => m.id === item.createdById) || { name: item.createdBy || '成員' };
+            const completer = allMembers.find(m => m.id === item.completedById) || { name: item.completedBy || '成員' };
 
-                  <div className="text-[10px] font-bold text-slate-400 mb-2 flex items-center gap-1"><UserCircle2 size={12} /> {item.createdBy || '成員'}</div>
-
-                  {item.isBought && (
-                    <div className="mb-2 space-y-2 mt-3">
-                      <div className="text-xs font-bold text-pink-600 flex items-center gap-1.5 bg-pink-50 px-3 py-1.5 rounded-lg w-fit border border-pink-100">
-                        <CheckCircle2 size={14} /> 於 {item.boughtAt} 購買
-                      </div>
-                      {item.recordedIn && item.price && item.price !== '0' && (
-                        <div className="flex items-center gap-2 flex-wrap pt-1">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">計入 {item.recordedIn}：</span>
-                          <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
+            return (
+              <div key={item.id} className={`bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-all group animate-in slide-in-from-bottom-2 ${item.isBought ? 'opacity-70 bg-slate-50/50' : ''}`}>
+                <div className="flex justify-between items-start gap-4 w-full">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-3">
+                      {isOwner ? (
+                        <button onClick={() => item.isBought ? handleUncheckBought(item) : setBoughtModal(item)} className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-colors shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-pink-200 text-pink-200 hover:bg-pink-50'}`}>
+                          {item.isBought ? <Check size={18} strokeWidth={4} /> : <Check size={18} strokeWidth={4} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
+                        </button>
+                      ) : (
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-slate-200'}`}>
+                          {item.isBought && <Check size={18} strokeWidth={4} />}
                         </div>
                       )}
+                      <div className="min-w-0 flex-1">
+                        <h4 className={`text-base font-bold text-slate-800 truncate ${item.isBought ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
+                        {item.shopName && <p className="text-xs font-black text-pink-400 mt-0.5 truncate">📍 預計購買：{item.shopName}</p>}
+                      </div>
                     </div>
-                  )}
 
-                  {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm font-medium text-slate-600 border-l-4 border-pink-300 mt-3 italic leading-relaxed whitespace-pre-wrap">{item.note}</p>}
-                  {item.photos?.length > 0 && (
-                    <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
-                      {item.photos.map((p, i) => (
-                        <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="photo" />
-                      ))}
+                    <div className="text-[10px] font-bold text-slate-400 mb-2 flex items-center gap-1.5">
+                      <Avatar member={creator} className="w-4 h-4 rounded-md" />
+                      <span>{creator.name} 許願</span>
                     </div>
-                  )}
+
+                    {item.isBought && (
+                      <div className="mb-2 space-y-2 mt-3">
+                        <div className="text-xs font-bold text-pink-600 flex items-center gap-1.5 bg-pink-50 px-3 py-1.5 rounded-lg w-fit border border-pink-100">
+                          <Avatar member={completer} className="w-4 h-4 rounded-md" />
+                          <span>由 {completer.name} 於 {item.boughtAt} 採購</span>
+                        </div>
+                        {item.recordedIn && item.price && item.price !== '0' && (
+                          <div className="flex items-center gap-2 flex-wrap pt-1">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">計入 {item.recordedIn}：</span>
+                            <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm font-medium text-slate-600 border-l-4 border-pink-300 mt-3 italic leading-relaxed whitespace-pre-wrap">{item.note}</p>}
+                    {item.photos?.length > 0 && (
+                      <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
+                        {item.photos.map((p, i) => (
+                          <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="photo" />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-end gap-3 shrink-0">
+                    {isOwner && (
+                      <div className="flex gap-1.5 opacity-80 hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setModal({ type: 'edit', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200 shadow-sm active:scale-90"><Edit2 size={13} /></button>
+                        <button onClick={() => handleDeleteShoppingItem(item)} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-200 shadow-sm active:scale-90"><Trash2 size={13} /></button>
+                      </div>
+                    )}
+                    {item.mapUrl && (
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-white text-pink-500 rounded-2xl flex flex-col items-center justify-center hover:bg-pink-50 active:scale-90 flex-shrink-0 border border-pink-200 shadow-md transition-all">
+                        <Navigation size={18} strokeWidth={2.5} />
+                        <span className="text-[9px] font-black mt-0.5 tracking-wider">MAP</span>
+                      </a>
+                    )}
+                  </div>
                 </div>
-                {item.mapUrl && (
-                  <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-white text-pink-500 rounded-2xl flex flex-col items-center justify-center hover:bg-pink-50 active:scale-90 flex-shrink-0 border border-pink-200 shadow-sm transition-colors">
-                    <Navigation size={20} />
-                    <span className="text-[10px] font-bold mt-0.5">MAP</span>
-                  </a>
-                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
           {sortedList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">Empty List</div>}
         </div>
       )}
@@ -1210,8 +1259,9 @@ const ShoppingPage = ({ onDownload }) => {
       )}
 
       <Modal isOpen={!!modal.type} onClose={() => setModal({ type: null, data: null })} title={modal.data?.id ? '修改購物內容' : '新增購物清單'}>
-        <FormField label="商品名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} placeholder="輸入名稱" />
-        <FormField label="Map 連結（選填）" value={modal.data?.mapUrl} onChange={v => setModal({ ...modal, data: { ...modal.data, mapUrl: v } })} placeholder="貼上 Google Map 網址" />
+        <FormField label="商品名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} placeholder="如：Matin Kim 經典短 T" />
+        <FormField label="預計購買店家/商場（選填）" value={modal.data?.shopName} onChange={v => setModal({ ...modal, data: { ...modal.data, shopName: v } })} placeholder="如：新世界百貨 Centum City" />
+        <FormField label="Map 連結（選填：可貼 NAVER 或 Google Map）" value={modal.data?.mapUrl} onChange={v => setModal({ ...modal, data: { ...modal.data, mapUrl: v } })} placeholder="貼上地圖分享網址" />
         <FormField label="備註小細節" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} placeholder="如：幫誰帶的、大約價格" />
         <div className="mb-4">
           <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">相片（最多 5 張）</label>
@@ -1222,16 +1272,15 @@ const ShoppingPage = ({ onDownload }) => {
                 <button onClick={() => setTempPhotos(tempPhotos.filter((_, i) => i !== idx))} className="absolute top-1 right-1 p-1 bg-red-500/90 text-white rounded-lg backdrop-blur-sm"><X size={12} /></button>
               </div>
             ))}
-            {tempPhotos.length < 5 && <button onClick={() => document.getElementById('shop-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
+            {tempPhotos.length < 5 && <button onClick={() => document.getElementById('shopping-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
           </div>
-          <input type="file" id="shop-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            // 🌟 核心修正：呼叫自動相片壓縮
+          <input type="file" id="shopping-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
             Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => [...p, compressed]); }; r.readAsDataURL(file); });
           }} />
         </div>
         <button onClick={() => {
           if (!modal.data.name) return;
-          const finalData = { ...modal.data, photos: tempPhotos, isBought: modal.data.isBought || false, memberId: currentMember.id, city: cityTab, createdBy: modal.data.createdBy || currentMember.name, createdAt: modal.data.createdAt || Date.now() };
+          const finalData = { ...modal.data, photos: tempPhotos, isBought: modal.data.isBought || false, memberId: currentMember?.id || '', city: cityTab, createdById: modal.data.createdById || currentMember?.id || '', createdAt: modal.data.createdAt || Date.now() };
           
           if (modal.data.id) {
             setShoppingList(p => p.map(s => {
@@ -1309,10 +1358,13 @@ const BoughtModal = ({ isOpen, onClose, onConfirm }) => {
   );
 };
 
+// 🌟 在元件外部定義一個永遠不變的空陣列參考，徹底斷絕無窮渲染迴圈
+const EMPTY_ARRAY = [];
+
 // ─── WalletTab ────────────────────────────────────────────────────────────────
 const WalletTab = ({ onDownload }) => {
-  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, shoppingList, setShoppingList } = useMember();
-  const [viewMemberId, setViewMemberId] = useState(currentMember.id);
+  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets } = useMember();
+  const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
   const [subTab, setSubTab] = useState('共用錢包');
   const [modal, setModal] = useState({ type: null, data: null });
   const [isCalcOpen, setIsCalcOpen] = useState(false);
@@ -1320,11 +1372,13 @@ const WalletTab = ({ onDownload }) => {
   const [dateConfirmDel, setDateConfirmDel] = useState(null);
 
   useEffect(() => {
-    setViewMemberId(currentMember.id);
-  }, [currentMember.id]);
+    if (currentMember?.id) {
+      setViewMemberId(currentMember.id);
+    }
+  }, [currentMember?.id]);
 
-  const viewPersonalWallet = useMemo(() => allPersonalWallets[viewMemberId] || [], [allPersonalWallets, viewMemberId]);
-  const isOwner = viewMemberId === currentMember.id;
+  const viewPersonalWallet = useMemo(() => allPersonalWallets[viewMemberId] || EMPTY_ARRAY, [allPersonalWallets, viewMemberId]);
+  const isOwner = viewMemberId === currentMember?.id;
   const activeWallet = subTab === '共用錢包' ? sharedWallet : viewPersonalWallet;
   const setActiveWallet = subTab === '共用錢包' ? setSharedWallet : (isOwner ? setPersonalWallet : () => {});
 
@@ -1367,47 +1421,33 @@ const WalletTab = ({ onDownload }) => {
     return sum;
   }, [filteredWalletItems]);
 
-  useEffect(() => {
-    onDownload(() => () => {
-      let text = `${subTab} - ${selectedDate}\n\n`;
-      filteredWalletItems.forEach(i => { text += `[${i.type}] ${i.name} : ${i.currency} ${i.amount}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
-      downloadTextFile(text, `Wallet_${subTab}_${selectedDate.replace('/', '-')}`);
-    });
-  }, [filteredWalletItems, subTab, selectedDate, onDownload]);
-
   const handleDeleteWalletItem = (item) => {
-    setConfirmDel({
-      fn: () => {
-        if (item.shoppingItemId) {
-          setShoppingList(p => p.map(s => s.id === item.shoppingItemId ? { 
-            ...s, price: null, currency: null, recordedIn: null, walletRecordId: null 
-          } : s));
-        }
-        setActiveWallet(p => p.filter(w => w.id !== item.id));
-      }
-    });
+    setConfirmDel({ fn: () => setActiveWallet(p => p.filter(w => w.id !== item.id)) });
   };
 
   const handleDeleteDate = (d) => {
-    setDateConfirmDel({
-      fn: () => {
-        const itemsToDelete = activeWallet.filter(w => w.date === d);
-        itemsToDelete.forEach(item => {
-          if (item.shoppingItemId) {
-            setShoppingList(p => p.map(s => s.id === item.shoppingItemId ? { 
-              ...s, price: null, currency: null, recordedIn: null, walletRecordId: null 
-            } : s));
-          }
-        });
-        setActiveWallet(p => p.filter(w => w.date !== d));
-      }
-    });
+    setDateConfirmDel({ fn: () => setActiveWallet(p => p.filter(w => w.date !== d)) });
   };
 
   const handleAddClick = () => {
     const defaultDate = visibleWalletDates.includes(selectedDate) ? selectedDate : (visibleWalletDates[visibleWalletDates.length - 1] || `${(new Date().getMonth() + 1).toString().padStart(2, '0')}/${new Date().getDate().toString().padStart(2, '0')}`);
     setModal({ type: 'add', data: { type: '支出', currency: 'JPY', date: defaultDate } });
   };
+
+  // 🌟 安全下載機制：徹底截斷任何父子元件渲染迴圈
+  const downloadDataRef = React.useRef();
+  downloadDataRef.current = { subTab, selectedDate, filteredWalletItems };
+
+  useEffect(() => {
+    if (typeof onDownload === 'function') {
+      onDownload(() => () => {
+        const currentData = downloadDataRef.current;
+        let text = `${currentData.subTab} - ${currentData.selectedDate}\n\n`;
+        currentData.filteredWalletItems.forEach(i => { text += `[${i.type}] ${i.name} : ${i.currency} ${i.amount}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
+        downloadTextFile(text, `Wallet_${currentData.subTab}_${currentData.selectedDate.replace('/', '-')}`);
+      });
+    }
+  }, [onDownload]);
 
   const currencyConfig = {
     JPY: { bg: 'bg-rose-50/70', border: 'border-rose-100', badge: 'bg-rose-500', sym: '¥', text: 'text-rose-600', textLight: 'text-rose-400' },
@@ -1416,15 +1456,17 @@ const WalletTab = ({ onDownload }) => {
   };
 
   return (
-    <div className="relative animate-in fade-in pb-28">
+    <div className="relative pb-28">
       <div className="px-4 pt-5 mb-4">
+        {/* 頁籤切換 */}
         <div className="flex bg-violet-50/50 p-1.5 rounded-[2rem] border border-violet-100 mb-5">
           {['共用錢包', '個人記帳'].map(t => (
-            <button key={t} onClick={() => setSubTab(t)} className={`flex-1 py-2.5 text-sm font-bold rounded-2xl transition-all ${subTab === t ? 'bg-violet-500 text-white shadow-md' : 'text-violet-400 hover:text-violet-600'}`}>{t}</button>
+            <button key={t} type="button" onClick={() => setSubTab(t)} className={`flex-1 py-2.5 text-sm font-bold rounded-2xl transition-all ${subTab === t ? 'bg-violet-500 text-white shadow-md' : 'text-violet-400 hover:text-violet-600'}`}>{t}</button>
           ))}
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        {/* 外幣總額框 */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
           {['JPY', 'KRW', 'TWD'].map(cur => {
             const c = currencyConfig[cur];
             const val = walletTotals[cur];
@@ -1438,15 +1480,14 @@ const WalletTab = ({ onDownload }) => {
         </div>
       </div>
 
+      {/* 日期 Sticky 導航 */}
       <div className="sticky top-0 z-30 px-4 pt-3 pb-3 bg-white/95 backdrop-blur-md border-y border-slate-100 mb-5 flex flex-col gap-3">
         {visibleWalletDates.length > 0 && (
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
             {visibleWalletDates.map(d => (
-              <button key={d} onClick={() => setSelectedDate(d)} className={`flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-bold transition-all border flex items-center gap-1.5 ${selectedDate === d ? 'bg-violet-50 text-violet-600 border-violet-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>
+              <button key={d} type="button" onClick={() => setSelectedDate(d)} className={`flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-bold transition-all border flex items-center gap-1.5 ${selectedDate === d ? 'bg-violet-5 text-violet-600 border-violet-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>
                 {d}
-                <span onClick={e => { e.stopPropagation(); handleDeleteDate(d); }} className={`ml-1 transition-opacity ${selectedDate === d ? 'text-violet-400 hover:text-violet-600' : 'text-slate-300 hover:text-red-400'}`}>
-                  <X size={14} />
-                </span>
+                <span onClick={e => { e.stopPropagation(); handleDeleteDate(d); }} className={`ml-1 transition-opacity ${selectedDate === d ? 'text-violet-400 hover:text-violet-600' : 'text-slate-300 hover:text-red-400'}`}><X size={14} /></span>
               </button>
             ))}
           </div>
@@ -1458,17 +1499,20 @@ const WalletTab = ({ onDownload }) => {
         </div>
       </div>
 
+      {/* 流水帳明細 */}
       <div className="space-y-3 px-4">
         {filteredWalletItems.map(item => {
           const c = currencyConfig[item.currency] || currencyConfig.TWD;
           const isIncome = item.type === '存入';
+          const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '成員' };
+
           return (
-            <div key={item.id} className={`relative ${c.bg} border ${c.border} p-4 rounded-2xl shadow-sm hover:shadow-md transition-shadow group`}>
+            <div key={item.id} className={`relative p-4 rounded-2xl shadow-sm transition-shadow group ${c.bg} border ${c.border}`}>
               <div className="absolute top-3 right-3 flex gap-1.5 z-10 opacity-80 hover:opacity-100 transition-opacity">
                 {(subTab === '共用錢包' || isOwner) && (
                   <>
-                    <button onClick={() => setModal({ type: 'edit', data: item })} className="p-1.5 text-slate-500 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm"><Edit2 size={13} /></button>
-                    <button onClick={() => handleDeleteWalletItem(item)} className="p-1.5 text-red-500 bg-white hover:bg-red-50 rounded-lg transition-colors border border-red-200 shadow-sm"><Trash2 size={13} /></button>
+                    <button type="button" onClick={() => setModal({ type: 'edit', data: item })} className="p-1.5 text-slate-500 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm"><Edit2 size={13} /></button>
+                    <button type="button" onClick={() => handleDeleteWalletItem(item)} className="p-1.5 text-red-500 bg-white hover:bg-red-50 rounded-lg transition-colors border border-red-200 shadow-sm"><Trash2 size={13} /></button>
                   </>
                 )}
               </div>
@@ -1480,13 +1524,14 @@ const WalletTab = ({ onDownload }) => {
                 </div>
                 <h4 className="text-base font-bold text-slate-800 mb-1 leading-tight">{item.name}</h4>
                 {item.note && <p className="text-xs text-slate-600 italic bg-white/70 border-l-4 border-violet-200 p-2 rounded-r-xl mb-1.5">{item.note}</p>}
-                <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><History size={10} /> {item.lastEdited}</p>
+                <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-2">
+                  <Avatar member={editor} className="w-3.5 h-3.5 rounded-md" />
+                  <span>{editor.name} 記帳</span>
+                </div>
               </div>
 
               <div className="flex justify-end items-center gap-1.5 mt-2">
-                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-red-500' : 'text-blue-500'}`}>
-                  {isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount).toLocaleString()}
-                </p>
+                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-red-500' : 'text-blue-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount).toLocaleString()}</p>
                 {isIncome ? <TrendingUp size={22} className="text-red-400 opacity-80" /> : <TrendingDown size={22} className="text-blue-300 opacity-80" />}
               </div>
             </div>
@@ -1496,21 +1541,18 @@ const WalletTab = ({ onDownload }) => {
       </div>
 
       {(isOwner || subTab === '共用錢包') && (
-        <button onClick={handleAddClick} className="fixed bottom-[110px] right-6 w-16 h-16 bg-violet-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-violet-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
+        <button type="button" onClick={handleAddClick} className="fixed bottom-[110px] right-6 w-16 h-16 bg-violet-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-violet-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
       )}
 
+      {/* 新增/編輯視窗 */}
       <Modal isOpen={!!modal.type} onClose={() => { setModal({ type: null, data: null }); setIsCalcOpen(false); }} title={modal.data?.id ? '編輯帳目' : '新增帳目'}>
-        {!isOwner && subTab === '個人記帳' && (
-          <div className="mb-4 rounded-3xl bg-slate-50 p-4 text-sm text-slate-500 border border-slate-100">
-            目前檢視 {allMembers.find(m => m.id === viewMemberId)?.name || '成員'} 的個人記帳，僅能由本人編輯。
-          </div>
-        )}
-        <FormField label="項目名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} placeholder="如：晚餐公費" />
+        <FormField label="項目名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} placeholder="如：機票公費、晚餐代墊" />
         <div className="flex bg-slate-50 p-1.5 rounded-2xl mb-4 shrink-0 border border-slate-100">
           {['存入', '支出'].map(t => (
-            <button key={t} onClick={() => setModal({ ...modal, data: { ...modal.data, type: t } })} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${modal.data?.type === t ? (t === '存入' ? 'bg-red-500 text-white shadow-md' : 'bg-blue-500 text-white shadow-md') : 'text-slate-400 hover:text-slate-600'}`}>{t}</button>
+            <button key={t} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, type: t } })} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${modal.data?.type === t ? (t === '存入' ? 'bg-red-500 text-white shadow-md' : 'bg-blue-500 text-white shadow-md') : 'text-slate-400 hover:text-slate-600'}`}>{t}</button>
           ))}
         </div>
+        
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
             <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">日期</label>
@@ -1523,41 +1565,24 @@ const WalletTab = ({ onDownload }) => {
             <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
             <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
           </div>
-          <button onClick={() => setIsCalcOpen(!isCalcOpen)} className={`p-2.5 rounded-xl transition-colors shadow-sm border ${isCalcOpen ? 'bg-violet-500 text-white border-violet-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}><Calculator size={24} /></button>
+          <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
         </div>
         {isCalcOpen && (
           <div className="grid grid-cols-3 gap-2 mb-3">
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
-              <button key={n} onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
+              <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
             ))}
-            <button onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 rounded-2xl font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
+            <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
           </div>
         )}
         <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} placeholder="輸入心得或詳情" />
-        <button onClick={() => {
-          if (!modal.data.amount || !modal.data.date) return;
+        <button type="button" onClick={() => {
+          if (!modal.data?.amount || !modal.data?.date) return;
           const formattedDate = modal.data.date.includes('-') ? modal.data.date.split('-').slice(1).join('/') : modal.data.date;
-          
-          const final = { ...modal.data, date: formattedDate, lastEdited: currentMember.name, createdAt: modal.data.createdAt || Date.now() };
-          
-          if (modal.data.id) {
-            setActiveWallet(p => p.map(w => {
-              if (w.id === modal.data.id) {
-                if (w.shoppingItemId) {
-                  setShoppingList(sList => sList.map(s => s.id === w.shoppingItemId ? {
-                    ...s, price: final.amount, currency: final.currency, name: final.name.startsWith('購買: ') ? final.name.replace('購買: ', '') : final.name
-                  } : s));
-                }
-                return final;
-              }
-              return w;
-            }));
-          } else {
-            setActiveWallet(p => [...p, { ...final, id: Date.now() }]);
-          }
-          
-          setSelectedDate(formattedDate);
-          setModal({ type: null }); setIsCalcOpen(false);
+          const final = { ...modal.data, date: formattedDate, editedById: currentMember?.id || '', createdAt: modal.data.createdAt || Date.now() };
+          if (modal.data.id) setActiveWallet(p => p.map(w => w.id === modal.data.id ? final : w));
+          else setActiveWallet(p => [...p, { ...final, id: Date.now() }]);
+          setSelectedDate(formattedDate); setModal({ type: null }); setIsCalcOpen(false);
         }} className="w-full bg-violet-500 text-white font-black py-4 rounded-2xl shadow-md mt-1 active:scale-95 text-base hover:bg-violet-600 transition-colors">確認儲存更新</button>
       </Modal>
 
@@ -1596,7 +1621,8 @@ const ListTab = ({ onDownload }) => {
     if (!isOwner) return;
     const now = new Date();
     const ts = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
-    setSharedTodos(p => p.map(it => it.id === todo.id ? { ...it, status: !it.status, completedBy: !it.status ? currentMember.name : null, completedAt: !it.status ? ts : null } : it));
+    // 🌟 記錄勾選者的 completedById
+    setSharedTodos(p => p.map(it => it.id === todo.id ? { ...it, status: !it.status, completedById: !it.status ? currentMember.id : null, completedAt: !it.status ? ts : null } : it));
   };
 
   return (
@@ -1620,29 +1646,43 @@ const ListTab = ({ onDownload }) => {
       </div>
 
       <div className="space-y-4 mt-5 px-4">
-        {sortedTodos.map(todo => (
-          <div key={todo.id} className={`relative bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group animate-in slide-in-from-bottom-2 ${todo.status ? 'opacity-60 bg-slate-50/80' : ''}`}>
-            {isOwner && (
-              <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
-                <button onClick={() => setModal({ type: 'todo', data: todo })} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
-                <button onClick={() => setConfirmDel({ fn: () => setSharedTodos(p => p.filter(t => t.id !== todo.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
-              </div>
-            )}
-            <div className="flex items-start gap-4">
-              <button onClick={() => handleToggle(todo)} className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-colors shrink-0 ${todo.status ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
-                {todo.status && <Check size={18} strokeWidth={4} />}
-              </button>
-              <div className="flex-1 pr-16">
-                <h4 className={`text-base font-bold text-slate-800 leading-tight pt-0.5 ${todo.status ? 'line-through text-slate-400' : ''}`}>{todo.content}</h4>
-                {todo.note && <p className="text-sm text-slate-600 italic bg-slate-50 border-l-4 border-emerald-200 p-3 rounded-r-2xl mt-3 whitespace-pre-wrap">{todo.note}</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-100 flex items-center gap-1"><History size={12} /> {todo.lastEdited}</span>
-                  {todo.status && <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100 flex items-center gap-1"><CheckCircle2 size={12} /> {todo.completedBy} {todo.completedAt}</span>}
+        {sortedTodos.map(todo => {
+          // 🌟 核心對照：動態解析編輯者與勾選完成者
+          const editor = allMembers.find(m => m.id === todo.editedById) || { name: todo.lastEdited || '成員' };
+          const completer = allMembers.find(m => m.id === todo.completedById) || { name: todo.completedBy || '成員' };
+
+          return (
+            <div key={todo.id} className={`relative bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group animate-in slide-in-from-bottom-2 ${todo.status ? 'opacity-60 bg-slate-50/80' : ''}`}>
+              {isOwner && (
+                <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
+                  <button onClick={() => setModal({ type: 'todo', data: todo })} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
+                  <button onClick={() => setConfirmDel({ fn: () => setSharedTodos(p => p.filter(t => t.id !== todo.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+                </div>
+              )}
+              <div className="flex items-start gap-4">
+                <button onClick={() => handleToggle(todo)} className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-colors shrink-0 ${todo.status ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                  {todo.status && <Check size={18} strokeWidth={4} />}
+                </button>
+                <div className="flex-1 pr-16">
+                  <h4 className={`text-base font-bold text-slate-800 leading-tight pt-0.5 ${todo.status ? 'line-through text-slate-400' : ''}`}>{todo.content}</h4>
+                  {todo.note && <p className="text-sm text-slate-600 italic bg-slate-50 border-l-4 border-emerald-200 p-3 rounded-r-2xl mt-3 whitespace-pre-wrap">{todo.note}</p>}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2.5 py-1 rounded-md border border-slate-100 flex items-center gap-1.5">
+                      <Avatar member={editor} className="w-3.5 h-3.5 rounded-md" />
+                      <span>{editor.name} 編輯</span>
+                    </span>
+                    {todo.status && (
+                      <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100 flex items-center gap-1.5">
+                        <Avatar member={completer} className="w-3.5 h-3.5 rounded-md" />
+                        <span>{completer.name} 搞定于 {todo.completedAt}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {sortedTodos.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚無項目</div>}
       </div>
 
@@ -1653,7 +1693,8 @@ const ListTab = ({ onDownload }) => {
         <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} />
         <button onClick={() => {
           if (!modal.data.content) return;
-          const final = { ...modal.data, type: subTab === '共用清單' ? '共用' : '個人', ownerId: currentMember.id, lastEdited: currentMember.name, status: modal.data.status || false, createdAt: modal.data.createdAt || Date.now() };
+          // 🌟 紀錄端更換為 editedById
+          const final = { ...modal.data, type: subTab === '共用清單' ? '共用' : '個人', ownerId: currentMember.id, editedById: currentMember.id, status: modal.data.status || false, createdAt: modal.data.createdAt || Date.now() };
           if (modal.data.id) setSharedTodos(p => p.map(it => it.id === modal.data.id ? final : it));
           else setSharedTodos(p => [...p, { ...final, id: Date.now() }]);
           setModal({ type: null });
@@ -1666,7 +1707,7 @@ const ListTab = ({ onDownload }) => {
 
 // ─── NotesTab ─────────────────────────────────────────────────────────────────
 const NotesTab = ({ onDownload }) => {
-  const { currentMember, sharedNotes, setSharedNotes, personalNotes, setPersonalNotes } = useMember();
+  const { currentMember, sharedNotes, setSharedNotes, personalNotes, setPersonalNotes, allMembers } = useMember();
   const [subTab, setSubTab] = useState('共用記事');
   const [modal, setModal] = useState({ type: null, data: null });
   const [tempPhoto, setTempPhoto] = useState(null);
@@ -1698,20 +1739,28 @@ const NotesTab = ({ onDownload }) => {
       </div>
 
       <div className="space-y-4">
-        {sortedNotes.map(note => (
-          <div key={note.id} className="relative bg-white border border-slate-100 p-6 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group animate-in slide-in-from-bottom-2">
-            <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
-              <button onClick={() => { setModal({ type: 'text', data: note }); setTempPhoto(note.photo || null); }} className="p-2 text-indigo-500 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors border border-indigo-100"><Edit2 size={14} /></button>
-              <button onClick={() => setConfirmDel({ fn: () => setActiveNotes(p => p.filter(n => n.id !== note.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+        {sortedNotes.map(note => {
+          // 🌟 核心對照：動態匹配記事本的作者
+          const editor = allMembers.find(m => m.id === note.editedById) || { name: note.lastEdited || '成員' };
+
+          return (
+            <div key={note.id} className="relative bg-white border border-slate-100 p-6 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group animate-in slide-in-from-bottom-2">
+              <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
+                <button onClick={() => { setModal({ type: 'text', data: note }); setTempPhoto(note.photo || null); }} className="p-2 text-indigo-500 bg-indigo-50 hover:bg-indigo-100 rounded-xl transition-colors border border-indigo-100"><Edit2 size={14} /></button>
+                <button onClick={() => setConfirmDel({ fn: () => setActiveNotes(p => p.filter(n => n.id !== note.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+              </div>
+              {note.photo && <img src={note.photo} onClick={() => setViewerPhotos([note.photo])} alt="note" className="w-full h-48 object-cover rounded-[1.5rem] mb-4 shadow-sm border border-slate-100 cursor-pointer hover:opacity-90 transition-opacity" />}
+              {note.content && <p className="text-slate-700 whitespace-pre-wrap leading-relaxed text-sm pr-16">{note.content}</p>}
+              <div className="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                <span>{note.date}</span>
+                <div className="flex items-center gap-1.5">
+                  <Avatar member={editor} className="w-3.5 h-3.5 rounded-md" />
+                  <span>由 {editor.name} 編輯</span>
+                </div>
+              </div>
             </div>
-            {note.photo && <img src={note.photo} onClick={() => setViewerPhotos([note.photo])} alt="note" className="w-full h-48 object-cover rounded-[1.5rem] mb-4 shadow-sm border border-slate-100 cursor-pointer hover:opacity-90 transition-opacity" />}
-            {note.content && <p className="text-slate-700 whitespace-pre-wrap leading-relaxed text-sm pr-16">{note.content}</p>}
-            <div className="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              <span>{note.date}</span>
-              <span>由 {note.lastEdited} 編輯</span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {sortedNotes.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚無記事</div>}
       </div>
 
@@ -1722,7 +1771,6 @@ const NotesTab = ({ onDownload }) => {
 
       <input type="file" id="note-photo-up" className="hidden" accept="image/*" onChange={e => {
         const file = e.target.files[0];
-        // 🌟 核心修正：呼叫自動相片壓縮
         if (file) { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhoto(compressed); setModal({ type: 'text', data: {} }); }; r.readAsDataURL(file); }
       }} />
 
@@ -1738,7 +1786,8 @@ const NotesTab = ({ onDownload }) => {
           if (!modal.data.content && !tempPhoto) return;
           const now = new Date();
           const ts = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
-          const final = { ...modal.data, content: modal.data.content || '', photo: tempPhoto, date: modal.data.date || ts, lastEdited: currentMember.name, createdAtMs: modal.data.createdAtMs || now.getTime() };
+          // 🌟 儲存端改用 editedById
+          const final = { ...modal.data, content: modal.data.content || '', photo: tempPhoto, date: modal.data.date || ts, editedById: currentMember.id, createdAtMs: modal.data.createdAtMs || now.getTime() };
           if (modal.data.id) setActiveNotes(p => p.map(n => n.id === modal.data.id ? final : n));
           else setActiveNotes(p => [{ ...final, id: Date.now() }, ...p]);
           setModal({ type: null });
@@ -1749,7 +1798,6 @@ const NotesTab = ({ onDownload }) => {
     </div>
   );
 };
-
 // ─── InitScreen / AuthScreen ──────────────────────────────────────────────────
 const InitScreen = () => {
   const { createInitialAdmin, initName, setInitName } = useMember();
@@ -1883,7 +1931,7 @@ const MainLayout = () => {
               <div className={`p-2.5 rounded-2xl transition-all ${isActive ? 'bg-slate-50' : ''}`}>
                 <Icon size={26} strokeWidth={isActive ? 2.5 : 2} />
               </div>
-              <span className={`text-[10px] font-bold mt-0.5 ${isActive ? 'opacity-100' : 'opacity-0'}`}>{tab.label}</span>
+              <span classNae={`text-[10px] font-bold mt-0.5 ${isActive ? 'opacity-100' : 'opacity-0'}`}>{tab.label}</span>
             </button>
           );
         })}
@@ -1950,7 +1998,33 @@ export default function App() {
   return (
     <MemberProvider>
       <MemberContext.Consumer>
-        {({ allMembers, currentMember }) => {
+        {({ allMembers, currentMember, isMembersLoading }) => {
+          // 🌟 核心攔截：自訂超可愛的飛機虛線 Loading 畫面
+          if (isMembersLoading) {
+            return (
+              <div className="h-screen max-w-md mx-auto flex flex-col justify-center items-center bg-slate-50 p-8">
+                
+                {/* ✈️ 飛機與虛線等待動效容器 */}
+                <div className="w-64 relative flex items-center justify-center mb-8 py-4">
+                  {/* 橫向飛行虛線軌道 */}
+                  <div className="absolute left-0 right-0 h-0 border-t-2 border-dashed border-blue-200 animate-pulse" />
+                  
+                  {/* 飛機本體（模擬高空巡航，溫和漂浮） */}
+                  <div className="bg-slate-50 px-4 z-10 animate-bounce" style={{ animationDuration: '2.5s' }}>
+                    <Plane size={38} className="text-blue-500 rotate-90 transform" />
+                  </div>
+                </div>
+                
+                {/* 提示文字 */}
+                <p className="text-xs font-black text-slate-400 tracking-widest uppercase animate-pulse">
+                  航班準備中，正在導航至雲端...
+                </p>
+                
+              </div>
+            );
+          }
+
+          // 下面的分流邏輯保持不變
           if (allMembers.length === 0) return <InitScreen />;
           if (!currentMember) return <AuthScreen />;
           return <MainLayout />;
