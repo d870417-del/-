@@ -2,10 +2,25 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useRef,
 import {
   Map, Utensils, ShoppingBag, Home, Users, User, Settings,
   Plane, Clock, Wallet, MapPin, Calendar, LogOut,
-  ChevronRight, ChevronLeft, Plus, Edit2, Trash2, X, Check, Navigation, Camera, Delete, Calculator, CheckCircle2, UserCircle2, TrendingUp, TrendingDown, History, Download, FileText, AlertTriangle
+  ChevronRight, ChevronLeft, Plus, Edit2, Trash2, X, Check, Navigation, Camera, Delete, Calculator, CheckCircle2, UserCircle2, TrendingUp, TrendingDown, History, Download, FileText, AlertTriangle, List
 } from 'lucide-react';
 
 const appId = 'travel-pro-v42-final';
+
+// ─── 輔助元件：地圖嵌入 (Map Embed) ──────────────────────────────────────────
+// 透過 Google Maps 簡易 Query 來達成免 API Key 的地圖預覽
+const MapEmbed = ({ query }) => (
+  <iframe
+    width="100%"
+    height="100%"
+    frameBorder="0"
+    scrolling="no"
+    marginHeight="0"
+    marginWidth="0"
+    src={`https://maps.google.com/maps?q=${encodeURIComponent(query)}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
+    className="grayscale-[10%] contrast-[1.05]"
+  ></iframe>
+);
 
 // ─── Photo Viewer Modal (圖片預覽器) ─────────────────────────────────────────
 const PhotoViewerModal = ({ photos, initialIndex = 0, isOpen, onClose }) => {
@@ -67,7 +82,6 @@ const useStorageState = (key, initial) => {
 
   return [state, set];
 };
-
 // ─── MemberContext ────────────────────────────────────────────────────────────
 const MemberContext = createContext();
 
@@ -80,24 +94,52 @@ export function MemberProvider({ children }) {
   const [walletDates, setWalletDates] = useStorageState(`${appId}:walletDates`, []);
 
   const [trips, setTrips] = useStorageState(`${appId}:trips`, [{ id: 1, title: '釜山東京雙城遊', date: '2026-06-06' }]);
+  
+  // 更新：寫入完整航班資訊
   const [flights, setFlights] = useStorageState(`${appId}:flights`, [
     { id: 1, no: 'CI 0190', date: '06/06', from: '桃園', to: '釜山', dep: '06:15', arr: '09:30' },
     { id: 2, no: 'BX 112', date: '06/10', from: '釜山', to: '東京成田', dep: '07:50', arr: '10:00' },
     { id: 3, no: 'CI 0101', date: '06/14', from: '東京成田', to: '台北桃園', dep: '14:30', arr: '17:15' }
   ]);
+  
+  // 更新：寫入完整住宿資訊
   const [stays, setStays] = useStorageState(`${appId}:stays`, [
     { id: 1, name: 'UH Continental CenterPoint', checkIn: '06/06', checkOut: '06/10', mapUrl: 'https://maps.app.goo.gl/tniUPpQDWuPtW4oQ6' },
     { id: 2, name: '三井花園飯店五反田', checkIn: '06/10', checkOut: '06/14', mapUrl: 'https://maps.app.goo.gl/Zw8Apv464GyRTnKG9' }
   ]);
 
+  // 更新：寫入 6/6 ~ 6/10 釜山完整行程與時間軸
   const [globalItinerary, setGlobalItinerary] = useStorageState(`${appId}:globalItinerary`, [
+    // Day 1
     { id: 101, date: '06/06', time: '10:30', name: '抵達飯店 & 寄放行李', category: '住宿', mapUrl: '', note: '從機場叫兩台計程車直達 UH Continental。飯店位置極佳，寄完行李可以先在沙灘前拍第一組 6 人合照。', lastEdited: '管理員', photos: [], createdAt: 1 },
     { id: 102, date: '06/06', time: '12:00', name: '午餐：海雲台傳統市場', category: '美食', mapUrl: '', note: '市場就在飯店旁邊\n必吃推薦：尚國家飯捲 (Sang-guk-ine) 的辣炒年糕與炸物、釜山道地的豬肉湯飯。', lastEdited: '管理員', photos: [], createdAt: 2 },
-    { id: 103, date: '06/06', time: '14:00', name: 'Centum City 購物 & Spa Land 汗蒸幕', category: '景點', mapUrl: '', note: 'Spa Land：號稱「汗蒸幕界的愛馬仕」，有 22 個不同溫度的房型。紅眼班機後在這裡睡午覺是最好的恢復方式。\n\n新世界百貨：逛完 Spa Land 直接逛百貨。B2 樓層有最多韓系潮牌 (Matin Kim, Marithé 等)，8 樓則是新世界免稅店。', lastEdited: '管理員', photos: [], createdAt: 3 },
+    { id: 103, date: '06/06', time: '14:00', name: 'Centum City 購物 & Spa Land 汗蒸幕', category: '景點', mapUrl: '', note: 'Spa Land (VBP景點)：號稱「汗蒸幕界的愛馬仕」，有 22 個不同溫度的房型。紅眼班機後在這裡睡午覺是最好的恢復方式。\n\n新世界百貨：逛完 Spa Land 直接逛百貨。B2 樓層有最多韓系潮牌 (Matin Kim, Marithé 等)，8 樓則是新世界免稅店。', lastEdited: '管理員', photos: [], createdAt: 3 },
     { id: 104, date: '06/06', time: '19:00', name: '廣安里海水浴場', category: '景點', mapUrl: '', note: '搭計程車 15 分鐘\n必做清單：廣安大橋夜景、在沙灘上玩仙女棒。', lastEdited: '管理員', photos: [], createdAt: 4 },
     { id: 105, date: '06/06', time: '20:00', name: '廣安里 M 無人機秀 (週六限定)', category: '景點', mapUrl: '', note: '必看提醒：這是釜山週六最大的重頭戲，數百台無人機會在空中變換圖案。', lastEdited: '管理員', photos: [], createdAt: 5 },
     { id: 106, date: '06/06', time: '21:00', name: '晚餐：廣安里炸雞配啤酒', category: '美食', mapUrl: '', note: '推薦：BHC 炸雞或橋村炸雞。', lastEdited: '管理員', photos: [], createdAt: 6 },
+    // Day 2
     { id: 201, date: '06/07', time: '10:00', name: '慢活早晨：海理團路', category: '景點', mapUrl: '', note: '飯店對面區域\n穿過海雲台車站後方，有許多老宅改建的歐式早午餐店、肉桂捲名店。', lastEdited: '管理員', photos: [], createdAt: 7 },
+    { id: 202, date: '06/07', time: '13:00', name: '海邊散步：海雲台沙灘 ➡️ 尾浦站', category: '景點', mapUrl: '', note: '從飯店沿著沙灘往左邊散步約 15 分鐘即可到達藍線公園 (Blue Line Park) 的起點。', lastEdited: '管理員', photos: [], createdAt: 8 },
+    { id: 203, date: '06/07', time: '15:15', name: '尾浦站報到 (已預約)', category: '交通', mapUrl: '', note: '搭乘前 15 分鐘完成報到', lastEdited: '管理員', photos: [], createdAt: 9 },
+    { id: 204, date: '06/07', time: '15:30', name: '天空膠囊列車 (尾浦 ➡️ 青沙浦)', category: '景點', mapUrl: '', note: '拍照攻略：膠囊火車行駛很慢，6 個人可以分兩台車，彼此互拍窗外的海景。', lastEdited: '管理員', photos: [], createdAt: 10 },
+    { id: 205, date: '06/07', time: '16:10', name: '青沙浦漫步', category: '景點', mapUrl: '', note: '必拍景點：紅白燈塔、灌籃高手場景平交道（火車穿過街道直奔大海）。', lastEdited: '管理員', photos: [], createdAt: 11 },
+    { id: 206, date: '06/07', time: '18:30', name: '晚餐：青沙浦烤貝類一條街', category: '美食', mapUrl: '', note: '必吃推薦：海仙境或秀敏家。在海邊帳篷下大口吃現烤貝類與海鮮塔，氣氛絕佳。', lastEdited: '管理員', photos: [], createdAt: 12 },
+    // Day 3
+    { id: 301, date: '06/08', time: '09:30', name: '甘川洞文化村', category: '景點', mapUrl: '', note: '必拍清單：找小王子與狐狸的背影拍 6 人合照、逛繽紛的彩繪階梯。', lastEdited: '管理員', photos: [], createdAt: 13 },
+    { id: 302, date: '06/08', time: '12:30', name: '午餐：南浦洞或札嘎其市場', category: '美食', mapUrl: '', note: '必吃推薦：南浦洞豬蹄街（生菜包豬蹄）、札嘎其市場的新鮮生魚片。', lastEdited: '管理員', photos: [], createdAt: 14 },
+    { id: 303, date: '06/08', time: '14:30', name: '松島海上纜車 & 龍宮雲橋', category: '景點', mapUrl: '', note: '體驗亮點 (VBP景點)：搭乘水晶車廂 (地板全透明) 橫跨海洋。龍宮雲橋則是建在無人島上的懸空步道。', lastEdited: '管理員', photos: [], createdAt: 15 },
+    { id: 304, date: '06/08', time: '17:00', name: '西面樂天免稅店 (8F)', category: '購物', mapUrl: '', note: '重要提醒：免稅店 18:30 就會關門，請務必先衝這區，再去逛地下街。', lastEdited: '管理員', photos: [], createdAt: 16 },
+    { id: 305, date: '06/08', time: '19:00', name: '晚餐：西面「味贊王鹽烤肉」', category: '美食', mapUrl: '', note: '必點推薦：3.5cm 厚切豬五花，專人代烤，是釜山最具人氣的烤肉店。', lastEdited: '管理員', photos: [], createdAt: 17 },
+    // Day 4
+    { id: 401, date: '06/09', time: '09:30', name: '海東龍宮寺', category: '景點', mapUrl: '', note: '景點特色：全韓國唯一建在海邊斷崖上的寺廟，非常莊嚴壯觀。', lastEdited: '管理員', photos: [], createdAt: 18 },
+    { id: 402, date: '06/09', time: '11:30', name: 'Skyline Luge 斜坡滑車', category: '景點', mapUrl: '', note: '必玩重點 (VBP景點)：就在寺廟對面。操作手把順著山坡滑下，6 人分組競賽超級有趣。', lastEdited: '管理員', photos: [], createdAt: 19 },
+    { id: 403, date: '06/09', time: '14:30', name: 'Busan X the Sky', category: '景點', mapUrl: '', note: '景點位置 (VBP景點)：就在妳們飯店隔壁的 LCT 大樓。這裡有全透明玻璃步道「Shocking Bridge」與世界最高星巴克。', lastEdited: '管理員', photos: [], createdAt: 20 },
+    { id: 404, date: '06/09', time: '17:00', name: 'The Bay 101 夜景', category: '景點', mapUrl: '', note: '拍照攻略：在碼頭空地拍摩天大樓在積水上的倒影（專業攝影師必拍角度）。', lastEdited: '管理員', photos: [], createdAt: 21 },
+    { id: 405, date: '06/09', time: '19:30', name: '樂天超市最後補貨', category: '購物', mapUrl: '', note: '必買推薦：HBAF 堅果、樂天巧克力派、各式韓國拉麵、海苔。超市內有紙箱區可打包。', lastEdited: '管理員', photos: [], createdAt: 22 },
+    // Day 5
+    { id: 501, date: '06/10', time: '04:30', name: '飯店退房', category: '住宿', mapUrl: '', note: '因為 07:50 飛機很早，這天要辛苦大家 04:30 集合。', lastEdited: '管理員', photos: [], createdAt: 23 },
+    { id: 502, date: '06/10', time: '05:30', name: '金海機場報到與免稅品領取', category: '交通', mapUrl: '', note: '重要提醒：進候機室後，先去領取前幾天在百貨買的國際精品。', lastEdited: '管理員', photos: [], createdAt: 24 },
+    { id: 503, date: '06/10', time: '07:50', name: '飛往東京成田 (BX 112)', category: '交通', mapUrl: '', note: '', lastEdited: '管理員', photos: [], createdAt: 25 },
   ]);
 
   const [shoppingList, setShoppingList] = useStorageState(`${appId}:shoppingList`, []);
@@ -156,6 +198,7 @@ export function MemberProvider({ children }) {
   };
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
+
 export const useMember = () => useContext(MemberContext);
 
 // ─── Confirm Dialog ───────────────────────────────────────────────────────────
@@ -288,7 +331,9 @@ const getCategoryColor = (cat) => {
     '其他': 'bg-slate-100 text-slate-600 border-slate-200',
   };
   return map[cat] || map['其他'];
-};// ─── HomePage ─────────────────────────────────────────────────────────────────
+};
+
+// ─── HomePage ─────────────────────────────────────────────────────────────────
 const HomePage = ({ onNavigate }) => {
   const { trips, setTrips, flights, setFlights, stays, setStays, globalItinerary, sharedWallet, personalWallet, currentMember } = useMember();
   const [modal, setModal] = useState({ type: null, data: null });
@@ -427,7 +472,10 @@ const HomePage = ({ onNavigate }) => {
               <p className="text-xs font-bold text-blue-500 tracking-widest uppercase flex items-center gap-1"><Calendar size={12} /> {s.checkIn} — {s.checkOut}</p>
             </div>
             {s.mapUrl && (
-              <a href={s.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors"><Navigation size={20} /></a>
+              <a href={s.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
+                <Navigation size={20} />
+                <span className="text-[10px] font-bold mt-0.5">MAP</span>
+              </a>
             )}
           </div>
         ))}
@@ -478,6 +526,9 @@ const HomePage = ({ onNavigate }) => {
 const TripPage = ({ onDownload }) => {
   const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember } = useMember();
   const [selectedDate, setSelectedDate] = useState(() => getSmartDate(tripDates));
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'map'
+  const [activeMapItem, setActiveMapItem] = useState(null);
+  
   const [modal, setModal] = useState({ type: null, data: null });
   const [tempPhotos, setTempPhotos] = useState([]);
   const [confirmDel, setConfirmDel] = useState(null);
@@ -488,16 +539,23 @@ const TripPage = ({ onDownload }) => {
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
 
-  // 空頁籤自動隱藏邏輯：是「待安排」、是「當前選取」，或「裡面有行程」才顯示
-  const visibleTripDates = useMemo(() => {
-    return tripDates.filter(d => d === '待安排' || d === selectedDate || globalItinerary.some(item => item.date === d));
-  }, [tripDates, selectedDate, globalItinerary]);
+  // 修正：取消空頁籤隱藏邏輯，讓所有日期都正常顯示
+  const visibleTripDates = tripDates;
 
   const filteredItems = useMemo(() => {
     const items = globalItinerary.filter(i => i.date === selectedDate);
     if (selectedDate === '待安排') return items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   }, [globalItinerary, selectedDate]);
+
+  // 地圖模式更新所選項目
+  useEffect(() => {
+    if (viewMode === 'map' && filteredItems.length > 0) {
+      if (!activeMapItem || !filteredItems.find(i => i.id === activeMapItem.id)) {
+        setActiveMapItem(filteredItems[0]);
+      }
+    }
+  }, [viewMode, filteredItems]);
 
   useEffect(() => {
     onDownload(() => () => {
@@ -534,9 +592,15 @@ const TripPage = ({ onDownload }) => {
       <div className="sticky top-0 z-30 px-4 pt-3 pb-3 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
         <div className="flex justify-between items-center mb-3 px-1">
           <h3 className="text-xs font-black text-blue-500 uppercase tracking-widest">行程時間軸</h3>
-          <button onClick={() => setDatePickerOpen(true)} className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold bg-blue-50 text-blue-600 border border-blue-100 active:scale-95 transition-all hover:bg-blue-100">
-            <Plus size={14} /> 新增日期
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex bg-slate-100/80 rounded-full p-1 border border-slate-200">
+              <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-full transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-500' : 'text-slate-400 hover:text-slate-600'}`}><List size={14} /></button>
+              <button onClick={() => setViewMode('map')} className={`p-1.5 rounded-full transition-colors ${viewMode === 'map' ? 'bg-white shadow-sm text-blue-500' : 'text-slate-400 hover:text-slate-600'}`}><Map size={14} /></button>
+            </div>
+            <button onClick={() => setDatePickerOpen(true)} className="flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-bold bg-blue-50 text-blue-600 border border-blue-100 active:scale-95 transition-all hover:bg-blue-100">
+              <Plus size={14} /> 新增日期
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
           {visibleTripDates.map(d => (
@@ -552,48 +616,77 @@ const TripPage = ({ onDownload }) => {
         </div>
       </div>
 
-      <div className="mt-5 px-4 relative">
-        {selectedDate !== '待安排' && filteredItems.length > 0 && (
-          <div className="absolute left-[2.35rem] top-0 bottom-0 w-0.5 bg-blue-100" style={{ top: 28, bottom: 28 }} />
-        )}
-        <div className="space-y-4">
-          {filteredItems.map((item, idx) => (
-            <div key={item.id} className="relative flex gap-3 animate-in slide-in-from-bottom-2">
-              {selectedDate !== '待安排' && (
-                <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
-                  <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
-                </div>
-              )}
-              <div className={`flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group ${selectedDate === '待安排' ? 'ml-0' : ''}`}>
-                <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  {item.time && <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg font-black text-xs border border-blue-100">{item.time}</span>}
-                  <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wide ${getCategoryColor(item.category)}`}>{item.category}</span>
-                  <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
-                    <button onClick={() => { setModal({ type: 'item', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
-                    <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+      {viewMode === 'map' ? (
+        <div className="mt-4 px-4 h-[calc(100vh-250px)] flex flex-col animate-in fade-in">
+          <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
+            {activeMapItem ? (
+              <MapEmbed query={activeMapItem.name} />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無行程可顯示</div>
+            )}
+          </div>
+          {filteredItems.length > 0 && (
+            <div className="h-32 mt-4 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
+              {filteredItems.map(item => (
+                <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-64 p-4 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${activeMapItem?.id === item.id ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {item.time && <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${activeMapItem?.id === item.id ? 'bg-white/20' : 'bg-blue-50 text-blue-600'}`}>{item.time}</span>}
+                    <span className={`text-xs font-bold ${activeMapItem?.id === item.id ? 'text-blue-100' : 'text-slate-400'}`}>{item.category}</span>
                   </div>
+                  <h4 className="font-bold text-sm truncate mb-1">{item.name}</h4>
+                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-blue-100' : 'text-slate-400'}`}>{item.note || '無備註'}</p>
                 </div>
-                <div className="flex justify-between items-start gap-4">
-                  <div className="flex-1">
-                    <h4 className="text-base font-bold text-slate-800 leading-tight mb-2">{item.name}</h4>
-                    {item.note && <div className="bg-slate-50 border-l-4 border-blue-300 p-3 mb-3 text-sm text-slate-600 italic rounded-r-2xl whitespace-pre-wrap">{item.note}</div>}
-                    {item.photos?.length > 0 && (
-                      <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
-                        {item.photos.map((p, i) => (
-                          <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
-                        ))}
-                      </div>
-                    )}
-                    <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest"><UserCircle2 size={12} /> {item.lastEdited}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="mt-5 px-4 relative animate-in fade-in">
+          {selectedDate !== '待安排' && filteredItems.length > 0 && (
+            <div className="absolute left-[2.35rem] top-0 bottom-0 w-0.5 bg-blue-100" style={{ top: 28, bottom: 28 }} />
+          )}
+          <div className="space-y-4">
+            {filteredItems.map((item, idx) => (
+              <div key={item.id} className="relative flex gap-3 animate-in slide-in-from-bottom-2">
+                {selectedDate !== '待安排' && (
+                  <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
+                    <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
                   </div>
-                  {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors"><Navigation size={20} /></a>}
+                )}
+                <div className={`flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group ${selectedDate === '待安排' ? 'ml-0' : ''}`}>
+                  <div className="flex items-center gap-2 mb-3 flex-wrap">
+                    {item.time && <span className="bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg font-black text-xs border border-blue-100">{item.time}</span>}
+                    <span className={`px-2.5 py-1 rounded-lg border font-bold text-xs uppercase tracking-wide ${getCategoryColor(item.category)}`}>{item.category}</span>
+                    <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
+                      <button onClick={() => { setModal({ type: 'item', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
+                      <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex-1">
+                      <h4 className="text-base font-bold text-slate-800 leading-tight mb-2">{item.name}</h4>
+                      {item.note && <div className="bg-slate-50 border-l-4 border-blue-300 p-3 mb-3 text-sm text-slate-600 italic rounded-r-2xl whitespace-pre-wrap">{item.note}</div>}
+                      {item.photos?.length > 0 && (
+                        <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+                          {item.photos.map((p, i) => (
+                            <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400 uppercase tracking-widest"><UserCircle2 size={12} /> {item.lastEdited}</div>
+                    </div>
+                    {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
+                      <Navigation size={20} />
+                      <span className="text-[10px] font-bold mt-0.5">MAP</span>
+                    </a>}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-          {filteredItems.length === 0 && <div className="py-20 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚未安排行程</div>}
+            ))}
+            {filteredItems.length === 0 && <div className="py-20 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚未安排行程</div>}
+          </div>
         </div>
-      </div>
+      )}
 
       <button onClick={() => { setModal({ type: 'item', data: { category: '景點', date: selectedDate } }); setTempPhotos([]); }} className="fixed bottom-[110px] right-6 w-16 h-16 bg-blue-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-blue-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
 
@@ -643,6 +736,10 @@ const FoodPage = ({ onDownload }) => {
   const { globalItinerary, setGlobalItinerary, tripDates, currentMember } = useMember();
   const [arrangedStatus, setArrangedStatus] = useState('待安排');
   const [subTab, setSubTab] = useState('釜山');
+  
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'map'
+  const [activeMapItem, setActiveMapItem] = useState(null);
+  
   const [modal, setModal] = useState({ type: null, data: null });
   const [tempPhotos, setTempPhotos] = useState([]);
   const [confirmDel, setConfirmDel] = useState(null);
@@ -656,11 +753,10 @@ const FoodPage = ({ onDownload }) => {
     else setSubTab('釜山');
   }, [arrangedStatus, tripDates]);
 
-  // 空頁籤自動隱藏邏輯：有安排美食或是目前所在的 subTab 才會顯示
+  // 修正：取消空頁籤隱藏邏輯，在「已安排」模式下顯示所有有效的旅遊天數
   const visibleFoodDates = useMemo(() => {
-    const dates = tripDates.filter(d => d !== '待安排');
-    return dates.filter(d => d === subTab || globalItinerary.some(item => item.category === '美食' && item.date === d));
-  }, [tripDates, subTab, globalItinerary]);
+    return tripDates.filter(d => d !== '待安排');
+  }, [tripDates]);
 
   const foodList = useMemo(() => {
     const items = globalItinerary.filter(i => {
@@ -671,6 +767,15 @@ const FoodPage = ({ onDownload }) => {
     if (arrangedStatus === '待安排') return items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   }, [globalItinerary, arrangedStatus, subTab]);
+
+  // 地圖模式更新所選項目
+  useEffect(() => {
+    if (viewMode === 'map' && foodList.length > 0) {
+      if (!activeMapItem || !foodList.find(i => i.id === activeMapItem.id)) {
+        setActiveMapItem(foodList[0]);
+      }
+    }
+  }, [viewMode, foodList]);
 
   useEffect(() => {
     onDownload(() => () => {
@@ -683,60 +788,93 @@ const FoodPage = ({ onDownload }) => {
   return (
     <div className="relative animate-in fade-in pb-28">
       <div className="sticky top-0 z-30 px-4 pt-3 pb-2 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm flex flex-col gap-3">
-        <div className="flex bg-orange-50/50 p-1.5 rounded-3xl border border-orange-100">
+        <div className="flex bg-orange-50/50 p-1.5 rounded-3xl border border-orange-100 relative">
           {['待安排', '已安排'].map(t => (
             <button key={t} onClick={() => setArrangedStatus(t)} className={`flex-1 px-4 py-2 text-sm font-bold rounded-2xl transition-all ${arrangedStatus === t ? 'bg-orange-500 text-white shadow-sm' : 'text-orange-400 hover:text-orange-500'}`}>{t}</button>
           ))}
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex bg-white rounded-full p-1 border border-orange-100 shadow-sm">
+            <button onClick={() => setViewMode('list')} className={`p-1 rounded-full transition-colors ${viewMode === 'list' ? 'bg-orange-100 text-orange-500' : 'text-slate-400 hover:text-slate-600'}`}><List size={14} /></button>
+            <button onClick={() => setViewMode('map')} className={`p-1 rounded-full transition-colors ${viewMode === 'map' ? 'bg-orange-100 text-orange-500' : 'text-slate-400 hover:text-slate-600'}`}><Map size={14} /></button>
+          </div>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
           {(arrangedStatus === '待安排' ? ['釜山', '東京'] : visibleFoodDates).map(tab => (
-            <button key={tab} onClick={() => setSubTab(tab)} className={`flex-shrink-0 px-5 py-2 rounded-2xl text-xs font-bold transition-all border ${subTab === tab ? 'bg-orange-50 text-orange-600 border-orange-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>{tab}</button>
+            <button key={tab} onClick={() => setSubTab(tab)} className={`flex-shrink-0 px-5 py-2 rounded-2xl text-xs font-bold transition-all border ${subTab === tab ? 'bg-orange-50 text-orange-600 border-orange-220 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>{tab}</button>
           ))}
         </div>
       </div>
 
-      <div className="relative mt-5 px-4">
-        {arrangedStatus === '已安排' && foodList.length > 0 && (
-          <div className="absolute left-[2.35rem] top-0 bottom-0 w-0.5 bg-orange-100" style={{ top: 28, bottom: 28 }} />
-        )}
-        <div className="space-y-4">
-          {foodList.map((item, idx) => (
-            <div key={item.id} className={`relative flex gap-3 animate-in slide-in-from-bottom-2`}>
-              {arrangedStatus === '已安排' && (
-                <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
-                  <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
-                </div>
-              )}
-              <div className="flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group">
-                <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  {item.time && arrangedStatus === '已安排' && <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-black text-xs border border-orange-100">{item.time}</span>}
-                  <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-bold text-xs border border-orange-100">美食</span>
-                  <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
-                    <button onClick={() => { setModal({ type: 'food', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
-                    <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+      {viewMode === 'map' ? (
+        <div className="mt-4 px-4 h-[calc(100vh-270px)] flex flex-col animate-in fade-in">
+          <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
+            {activeMapItem ? (
+              <MapEmbed query={activeMapItem.name + (activeMapItem.city ? ` ${activeMapItem.city}` : '')} />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無美食可顯示</div>
+            )}
+          </div>
+          {foodList.length > 0 && (
+            <div className="h-32 mt-4 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
+              {foodList.map(item => (
+                <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-64 p-4 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${activeMapItem?.id === item.id ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {item.time && arrangedStatus === '已安排' && <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${activeMapItem?.id === item.id ? 'bg-white/20' : 'bg-orange-50 text-orange-600'}`}>{item.time}</span>}
+                    <span className={`text-xs font-bold ${activeMapItem?.id === item.id ? 'text-orange-100' : 'text-slate-400'}`}>美食</span>
                   </div>
+                  <h4 className="font-bold text-sm truncate mb-1">{item.name}</h4>
+                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-orange-100' : 'text-slate-400'}`}>{item.note || '無備註'}</p>
                 </div>
-                <div className="flex justify-between items-start gap-4">
-                  <div className="flex-1">
-                    <h4 className="text-base font-bold text-slate-800 mb-2">{item.name}</h4>
-                    {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm text-slate-600 border-l-4 border-orange-300 italic leading-relaxed mb-3 whitespace-pre-wrap">{item.note}</p>}
-                    {item.photos?.length > 0 && (
-                      <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
-                        {item.photos.map((p, i) => (
-                          <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
-                        ))}
-                      </div>
-                    )}
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest"><UserCircle2 size={12} className="inline mr-1" />{item.lastEdited}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="relative mt-5 px-4 animate-in fade-in">
+          {arrangedStatus === '已安排' && foodList.length > 0 && (
+            <div className="absolute left-[2.35rem] top-0 bottom-0 w-0.5 bg-orange-100" style={{ top: 28, bottom: 28 }} />
+          )}
+          <div className="space-y-4">
+            {foodList.map((item, idx) => (
+              <div key={item.id} className={`relative flex gap-3 animate-in slide-in-from-bottom-2`}>
+                {arrangedStatus === '已安排' && (
+                  <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
+                    <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
                   </div>
-                  {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex items-center justify-center hover:bg-orange-100 active:scale-90 border border-orange-100 shrink-0 transition-colors"><Navigation size={20} /></a>}
+                )}
+                <div className="flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group">
+                  <div className="flex items-center gap-2 mb-3 flex-wrap">
+                    {item.time && arrangedStatus === '已安排' && <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-black text-xs border border-orange-100">{item.time}</span>}
+                    <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-bold text-xs border border-orange-100">美食</span>
+                    <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
+                      <button onClick={() => { setModal({ type: 'food', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
+                      <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex-1">
+                      <h4 className="text-base font-bold text-slate-800 mb-2">{item.name}</h4>
+                      {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm text-slate-600 border-l-4 border-orange-300 italic leading-relaxed mb-3 whitespace-pre-wrap">{item.note}</p>}
+                      {item.photos?.length > 0 && (
+                        <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+                          {item.photos.map((p, i) => (
+                            <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest"><UserCircle2 size={12} className="inline mr-1" />{item.lastEdited}</p>
+                    </div>
+                    {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex flex-col items-center justify-center hover:bg-orange-100 active:scale-90 border border-orange-100 shrink-0 transition-colors">
+                      <Navigation size={20} />
+                      <span className="text-[10px] font-bold mt-0.5">MAP</span>
+                    </a>}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-          {foodList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚無美食清單</div>}
+            ))}
+            {foodList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚無美食清單</div>}
+          </div>
         </div>
-      </div>
+      )}
 
       <button onClick={() => { setModal({ type: 'food', data: { category: '美食', date: arrangedStatus === '已安排' ? subTab : '待安排', city: arrangedStatus === '待安排' ? subTab : '釜山' } }); setTempPhotos([]); }} className="fixed bottom-[110px] right-6 w-16 h-16 bg-orange-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-orange-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
 
@@ -796,11 +934,16 @@ const CurrencyBadge = ({ amount, currency, type }) => {
     </span>
   );
 };
+
 // ─── ShoppingPage ─────────────────────────────────────────────────────────────
 const ShoppingPage = ({ onDownload }) => {
   const { allMembers, currentMember, shoppingList, setShoppingList, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, walletDates, setWalletDates } = useMember();
   const [viewMemberId, setViewMemberId] = useState(currentMember?.id);
   const [cityTab, setCityTab] = useState('釜山');
+  
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'map'
+  const [activeMapItem, setActiveMapItem] = useState(null);
+  
   const [modal, setModal] = useState({ type: null, data: null });
   const [tempPhotos, setTempPhotos] = useState([]);
   const [boughtModal, setBoughtModal] = useState(null);
@@ -818,6 +961,15 @@ const ShoppingPage = ({ onDownload }) => {
   }, [shoppingList, viewMemberId, cityTab]);
 
   const isOwner = viewMemberId === currentMember?.id;
+
+  // 地圖模式更新所選項目
+  useEffect(() => {
+    if (viewMode === 'map' && sortedList.length > 0) {
+      if (!activeMapItem || !sortedList.find(i => i.id === activeMapItem.id)) {
+        setActiveMapItem(sortedList[0]);
+      }
+    }
+  }, [viewMode, sortedList]);
 
   useEffect(() => {
     onDownload(() => () => {
@@ -884,81 +1036,114 @@ const ShoppingPage = ({ onDownload }) => {
 
   return (
     <div className="relative animate-in fade-in pb-28">
-      <div className="sticky top-0 z-30 px-4 pt-3 pb-2 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm flex flex-col gap-3">
-        {/* 頭像區域調整 pt-3 pb-3 讓外框發光圈不會被裁切 */}
-        <div className="flex items-center gap-4 overflow-x-auto no-scrollbar px-2 pt-3 pb-3">
-          {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
-            <button key={m.id} onClick={() => setViewMemberId(m.id)} className={`flex-shrink-0 flex flex-col items-center gap-1.5 transition-all ${viewMemberId === m.id ? 'scale-105' : 'opacity-50 grayscale hover:grayscale-0 hover:opacity-80'}`}>
-              <Avatar member={m} className={`w-12 h-12 shadow-sm ${viewMemberId === m.id ? 'ring-2 ring-offset-2 ring-pink-400' : ''}`} />
-              <span className={`text-[10px] font-bold uppercase tracking-wider ${viewMemberId === m.id ? 'text-pink-600' : 'text-slate-500'}`}>{m.name}</span>
-            </button>
-          ))}
+      <div className="sticky top-0 z-30 px-4 pt-3 pb-2 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm flex flex-col gap-1">
+        <div className="flex items-center justify-between pl-1 pr-1">
+          {/* 修正：此處加上 py-2 px-1 留出足夠垂直空間，防止放大效果與 ring 框線被滾動條裁切 */}
+          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar flex-1 py-2 px-1">
+            {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
+              <button key={m.id} onClick={() => setViewMemberId(m.id)} className={`flex-shrink-0 flex flex-col items-center gap-1.5 transition-all ${viewMemberId === m.id ? 'scale-105' : 'opacity-50 grayscale hover:grayscale-0 hover:opacity-80'}`}>
+                <Avatar member={m} className={`w-12 h-12 shadow-sm ${viewMemberId === m.id ? 'ring-2 ring-offset-2 ring-pink-400' : ''}`} />
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${viewMemberId === m.id ? 'text-pink-600' : 'text-slate-500'}`}>{m.name}</span>
+              </button>
+            ))}
+          </div>
+          {/* 地圖切換按鈕 */}
+          <div className="flex bg-white rounded-full p-1 border border-pink-100 shadow-sm shrink-0 ml-4">
+            <button onClick={() => setViewMode('list')} className={`p-1 rounded-full transition-colors ${viewMode === 'list' ? 'bg-pink-100 text-pink-500' : 'text-slate-400 hover:text-slate-600'}`}><List size={14} /></button>
+            <button onClick={() => setViewMode('map')} className={`p-1 rounded-full transition-colors ${viewMode === 'map' ? 'bg-pink-100 text-pink-500' : 'text-slate-400 hover:text-slate-600'}`}><Map size={14} /></button>
+          </div>
         </div>
-        <div className="flex items-center gap-2 px-1">
+        <div className="flex items-center gap-2 px-1 mt-1">
           {['釜山', '東京'].map(tab => (
             <button key={tab} onClick={() => setCityTab(tab)} className={`px-5 py-2 rounded-2xl text-sm font-bold transition-all border ${cityTab === tab ? 'bg-pink-50 text-pink-600 border-pink-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>{tab}</button>
           ))}
         </div>
       </div>
 
-      <div className="space-y-4 mt-5 px-4">
-        {sortedList.map(item => (
-          <div key={item.id} className={`relative bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-all group animate-in slide-in-from-bottom-2 ${item.isBought ? 'opacity-70 bg-slate-50/50' : ''}`}>
-            <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
-              {isOwner && <button onClick={() => { setModal({ type: 'edit', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-white hover:bg-slate-100 rounded-xl transition-colors border border-slate-200"><Edit2 size={14} /></button>}
-              {isOwner && <button onClick={() => handleDeleteShoppingItem(item)} className="p-2 text-red-500 bg-white hover:bg-red-50 rounded-xl transition-colors border border-red-200"><Trash2 size={14} /></button>}
-            </div>
-            <div className="flex justify-between items-start gap-4">
-              <div className="flex-1 pr-16">
-                <div className="flex items-center gap-3 mb-3">
-                  {isOwner ? (
-                    <button onClick={() => item.isBought ? handleUncheckBought(item) : setBoughtModal(item)} className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-colors shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-pink-200 text-pink-200 hover:bg-pink-50'}`}>
-                      {item.isBought ? <Check size={18} strokeWidth={4} /> : <Check size={18} strokeWidth={4} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
-                    </button>
-                  ) : (
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-slate-200'}`}>
-                      {item.isBought && <Check size={18} strokeWidth={4} />}
-                    </div>
-                  )}
-                  <h4 className={`text-base font-bold text-slate-800 ${item.isBought ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
+      {viewMode === 'map' ? (
+        <div className="mt-4 px-4 h-[calc(100vh-310px)] flex flex-col animate-in fade-in">
+          <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
+            {activeMapItem ? (
+              <MapEmbed query={activeMapItem.name + ` ${cityTab}`} />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無購物項目可顯示</div>
+            )}
+          </div>
+          {sortedList.length > 0 && (
+            <div className="h-32 mt-4 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
+              {sortedList.map(item => (
+                <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-64 p-4 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${item.isBought ? 'opacity-70 bg-slate-50' : ''} ${activeMapItem?.id === item.id ? 'bg-pink-500 text-white border-pink-500 opacity-100' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {item.isBought && <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${activeMapItem?.id === item.id ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>已購買</span>}
+                    <span className={`text-xs font-bold ${activeMapItem?.id === item.id ? 'text-pink-100' : 'text-slate-400'}`}>購物</span>
+                  </div>
+                  <h4 className={`font-bold text-sm truncate mb-1 ${item.isBought && activeMapItem?.id !== item.id ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
+                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-pink-100' : 'text-slate-400'}`}>{item.note || '無備註'}</p>
                 </div>
-
-                <div className="text-[10px] font-bold text-slate-400 mb-2 flex items-center gap-1"><UserCircle2 size={12} /> {item.createdBy || '成員'}</div>
-
-                {item.isBought && (
-                  <div className="mb-2 space-y-2 mt-3">
-                    <div className="text-xs font-bold text-pink-600 flex items-center gap-1.5 bg-pink-50 px-3 py-1.5 rounded-lg w-fit border border-pink-100">
-                      <CheckCircle2 size={14} /> 於 {item.boughtAt} 購買
-                    </div>
-                    {item.recordedIn && item.price && item.price !== '0' && (
-                      <div className="flex items-center gap-2 flex-wrap pt-1">
-                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">計入 {item.recordedIn}：</span>
-                        <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-4 mt-5 px-4 animate-in fade-in">
+          {sortedList.map(item => (
+            <div key={item.id} className={`relative bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-all group animate-in slide-in-from-bottom-2 ${item.isBought ? 'opacity-70 bg-slate-50/50' : ''}`}>
+              <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
+                {isOwner && <button onClick={() => { setModal({ type: 'edit', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-white hover:bg-slate-100 rounded-xl transition-colors border border-slate-200"><Edit2 size={14} /></button>}
+                {isOwner && <button onClick={() => handleDeleteShoppingItem(item)} className="p-2 text-red-500 bg-white hover:bg-red-50 rounded-xl transition-colors border border-red-200"><Trash2 size={14} /></button>}
+              </div>
+              <div className="flex justify-between items-start gap-4">
+                <div className="flex-1 pr-16">
+                  <div className="flex items-center gap-3 mb-3">
+                    {isOwner ? (
+                      <button onClick={() => item.isBought ? handleUncheckBought(item) : setBoughtModal(item)} className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-colors shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-pink-200 text-pink-200 hover:bg-pink-50'}`}>
+                        {item.isBought ? <Check size={18} strokeWidth={4} /> : <Check size={18} strokeWidth={4} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
+                      </button>
+                    ) : (
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-slate-200'}`}>
+                        {item.isBought && <Check size={18} strokeWidth={4} />}
                       </div>
                     )}
+                    <h4 className={`text-base font-bold text-slate-800 ${item.isBought ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
                   </div>
-                )}
 
-                {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm font-medium text-slate-600 border-l-4 border-pink-300 mt-3 italic leading-relaxed whitespace-pre-wrap">{item.note}</p>}
-                {item.photos?.length > 0 && (
-                  <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
-                    {item.photos.map((p, i) => (
-                      <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="photo" />
-                    ))}
-                  </div>
+                  <div className="text-[10px] font-bold text-slate-400 mb-2 flex items-center gap-1"><UserCircle2 size={12} /> {item.createdBy || '成員'}</div>
+
+                  {item.isBought && (
+                    <div className="mb-2 space-y-2 mt-3">
+                      <div className="text-xs font-bold text-pink-600 flex items-center gap-1.5 bg-pink-50 px-3 py-1.5 rounded-lg w-fit border border-pink-100">
+                        <CheckCircle2 size={14} /> 於 {item.boughtAt} 購買
+                      </div>
+                      {item.recordedIn && item.price && item.price !== '0' && (
+                        <div className="flex items-center gap-2 flex-wrap pt-1">
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">計入 {item.recordedIn}：</span>
+                          <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm font-medium text-slate-600 border-l-4 border-pink-300 mt-3 italic leading-relaxed whitespace-pre-wrap">{item.note}</p>}
+                  {item.photos?.length > 0 && (
+                    <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
+                      {item.photos.map((p, i) => (
+                        <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="photo" />
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {item.mapUrl && (
+                  <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-white text-pink-500 rounded-2xl flex flex-col items-center justify-center hover:bg-pink-50 active:scale-90 flex-shrink-0 border border-pink-200 shadow-sm transition-colors">
+                    <Navigation size={20} />
+                    <span className="text-[10px] font-bold mt-0.5">MAP</span>
+                  </a>
                 )}
               </div>
-              {item.mapUrl && (
-                <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-white text-pink-500 rounded-2xl flex flex-col items-center justify-center hover:bg-pink-50 active:scale-90 flex-shrink-0 border border-pink-200 shadow-sm transition-colors">
-                  <Navigation size={20} />
-                  <span className="text-[10px] font-bold mt-0.5">MAP</span>
-                </a>
-              )}
             </div>
-          </div>
-        ))}
-        {sortedList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">Empty List</div>}
-      </div>
+          ))}
+          {sortedList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">Empty List</div>}
+        </div>
+      )}
 
       {isOwner && (
         <button onClick={() => { setModal({ type: 'add', data: {} }); setTempPhotos([]); }} className="fixed bottom-[110px] right-6 w-16 h-16 bg-pink-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-pink-600 transition-colors">
@@ -1008,15 +1193,16 @@ const ShoppingPage = ({ onDownload }) => {
           }
           setModal({ type: null }); setTempPhotos([]);
         }} className="w-full bg-pink-500 text-white font-bold py-4 rounded-2xl shadow-md active:scale-95 mt-1 text-base hover:bg-pink-600 transition-colors">確認儲存清單</button>
-      </Modal>
+      </Modal>/
 
-      <BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
+<BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
       <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} title={confirmDel?.title} message={confirmDel?.message} />
       <PhotoViewerModal isOpen={!!viewerPhotos} onClose={() => setViewerPhotos(null)} photos={viewerPhotos} initialIndex={viewerIndex} />
     </div>
   );
 };
 
+// ─── BoughtModal (被不小心刪掉的計算機記帳視窗) ──────────────────────────────
 const BoughtModal = ({ isOpen, onClose, onConfirm }) => {
   const [price, setPrice] = useState('');
   const [currency, setCurrency] = useState('JPY');
@@ -1325,6 +1511,7 @@ const WalletTab = ({ onDownload }) => {
     </div>
   );
 };
+
 // ─── ListTab ──────────────────────────────────────────────────────────────────
 const ListTab = ({ onDownload }) => {
   const { allMembers, currentMember, sharedTodos, setSharedTodos } = useMember();
@@ -1366,7 +1553,7 @@ const ListTab = ({ onDownload }) => {
           ))}
         </div>
         {subTab === '個人清單' && (
-          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar px-1 pb-1">
+          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar px-2 pt-3 pb-3">
             {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
               <button key={m.id} onClick={() => setViewMemberId(m.id)} className={`flex-shrink-0 flex flex-col items-center gap-1.5 transition-all ${viewMemberId === m.id ? 'scale-105' : 'opacity-50 grayscale hover:grayscale-0 hover:opacity-80'}`}>
                 <Avatar member={m} className={`w-12 h-12 shadow-sm ${viewMemberId === m.id ? 'ring-2 ring-offset-2 ring-emerald-400' : ''}`} />
