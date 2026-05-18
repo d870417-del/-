@@ -340,14 +340,15 @@ const HomePage = ({ onNavigate }) => {
   const [confirmDel, setConfirmDel] = useState(null);
   const isAdmin = currentMember?.role === '管理員';
 
+  // 修正：首頁餘額僅計算共用錢包 (sharedWallet)，排除個人記帳
   const walletBalances = useMemo(() => {
     const totals = { JPY: 0, KRW: 0, TWD: 0 };
-    [...sharedWallet, ...personalWallet].forEach(item => {
+    sharedWallet.forEach(item => {
       const amt = Number(item.amount) || 0;
       if (item.type === '存入') totals[item.currency] += amt; else totals[item.currency] -= amt;
     });
     return totals;
-  }, [sharedWallet, personalWallet]);
+  }, [sharedWallet]);
 
   const nextTripItem = useMemo(() => {
     const now = new Date().setHours(0, 0, 0, 0);
@@ -492,7 +493,12 @@ const HomePage = ({ onNavigate }) => {
           <>
             <div className="grid grid-cols-2 gap-3">
               <FormField label="航班號" value={modal.data?.no} onChange={v => setModal({ ...modal, data: { ...modal.data, no: v } })} />
-              <FormField label="日期" value={modal.data?.date} onChange={v => setModal({ ...modal, data: { ...modal.data, date: v } })} />
+              <FormField 
+  label="日期"
+  value={modal.data?.date}
+  onChange={v => setModal({ ...modal, data: { ...modal.data, date: v } })} 
+/>
+
             </div>
             <div className="grid grid-cols-2 gap-3">
               <FormField label="出發地" value={modal.data?.from} onChange={v => setModal({ ...modal, data: { ...modal.data, from: v } })} />
@@ -1193,7 +1199,7 @@ const ShoppingPage = ({ onDownload }) => {
           }
           setModal({ type: null }); setTempPhotos([]);
         }} className="w-full bg-pink-500 text-white font-bold py-4 rounded-2xl shadow-md active:scale-95 mt-1 text-base hover:bg-pink-600 transition-colors">確認儲存清單</button>
-      </Modal>/
+      </Modal>
 
 <BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
       <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} title={confirmDel?.title} message={confirmDel?.message} />
