@@ -5,10 +5,76 @@ import {
   ChevronRight, ChevronLeft, Plus, Edit2, Trash2, X, Check, Navigation, Camera, Delete, Calculator, CheckCircle2, UserCircle2, TrendingUp, TrendingDown, History, Download, FileText, AlertTriangle, List
 } from 'lucide-react';
 
+// 🌟 引入遠端雲端資料庫設定
+import { db } from './firebase';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+
 const appId = 'travel-pro-v42-final';
 
+// ─── 圖片自動壓縮工具（防止圖片過大撐爆 Firestore 1MB 限制） ───────────────────
+const compressImageBase64 = (base64Str, maxWidth = 600, maxHeight = 600) => {
+  return new Promise((resolve) => {
+    if (!base64Str || !base64Str.startsWith('data:image')) {
+      resolve(base64Str);
+      return;
+    }
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      if (width > height) {
+        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
+      } else {
+        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.6)); // 壓縮為 60% 畫質的 JPEG
+    };
+  });
+};
+
+// ─── 遠端即時同步 Firebase Firestore Hook ───────────────────────────────────
+const useCloudState = (key, initial) => {
+  const [state, setState] = useState(initial);
+
+  useEffect(() => {
+    const safeKey = key.replace(/:/g, '_');
+    const docRef = doc(db, "travel_cooperation_v42", safeKey);
+
+    // 即時監聽雲端：只要任何一人修改，全體 6 人的畫面會在 1 秒內自動更新
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setState(docSnap.data().value);
+      } else {
+        setDoc(docRef, { value: initial }).catch(err => console.error(err));
+      }
+    }, (error) => {
+      console.error("Firebase 監聽失敗:", error);
+    });
+
+    return () => unsubscribe();
+  }, [key]);
+
+  const set = useCallback((valOrFn) => {
+    const safeKey = key.replace(/:/g, '_');
+    const docRef = doc(db, "travel_cooperation_v42", safeKey);
+    
+    setState(prev => {
+      const next = typeof valOrFn === 'function' ? valOrFn(prev) : valOrFn;
+      setDoc(docRef, { value: next }).catch(err => console.error("雲端儲存失敗:", err));
+      return next;
+    });
+  }, [key]);
+
+  return [state, set];
+};
+
 // ─── 輔助元件：地圖嵌入 (Map Embed) ──────────────────────────────────────────
-// 透過 Google Maps 簡易 Query 來達成免 API Key 的地圖預覽
 const MapEmbed = ({ query }) => (
   <iframe
     width="100%"
@@ -82,37 +148,37 @@ const useStorageState = (key, initial) => {
 
   return [state, set];
 };
+
 // ─── MemberContext ────────────────────────────────────────────────────────────
 const MemberContext = createContext();
 
 export function MemberProvider({ children }) {
   const [initName, setInitName] = useState('');
-  const [currentMember, setCurrentMember] = useStorageState(`${appId}:member`, null);
-  const [allMembers, setAllMembers] = useStorageState(`${appId}:allMembers`, []);
-
-  const [tripDates, setTripDates] = useStorageState(`${appId}:tripDates`, ['待安排', '06/06', '06/07', '06/08', '06/09', '06/10', '06/11', '06/12', '06/13', '06/14']);
-  const [walletDates, setWalletDates] = useStorageState(`${appId}:walletDates`, []);
-
-  const [trips, setTrips] = useStorageState(`${appId}:trips`, [{ id: 1, title: '釜山東京雙城遊', date: '2026-06-06' }]);
   
-  // 更新：寫入完整航班資訊
-  const [flights, setFlights] = useStorageState(`${appId}:flights`, [
+  // 🔒 只有登入身分維持不變（留在各自的手機隨身碟裡）
+  const [currentMember, setCurrentMember] = useStorageState(`${appId}:member`, null);
+  
+  // 🌐 以下全部無痛改成雲端同步 Hook，實現 6 人即時共享！
+  const [allMembers, setAllMembers] = useCloudState(`${appId}:allMembers`, []);
+  const [tripDates, setTripDates] = useCloudState(`${appId}:tripDates`, ['待安排', '06/06', '06/07', '06/08', '06/09', '06/10', '06/11', '06/12', '06/13', '06/14']);
+  const [walletDates, setWalletDates] = useCloudState(`${appId}:walletDates`, []);
+  const [trips, setTrips] = useCloudState(`${appId}:trips`, [{ id: 1, title: '釜山東京雙城遊', date: '2026-06-06' }]);
+  
+  const [flights, setFlights] = useCloudState(`${appId}:flights`, [
     { id: 1, no: 'CI 0190', date: '06/06', from: '桃園', to: '釜山', dep: '06:15', arr: '09:30' },
     { id: 2, no: 'BX 112', date: '06/10', from: '釜山', to: '東京成田', dep: '07:50', arr: '10:00' },
     { id: 3, no: 'CI 0101', date: '06/14', from: '東京成田', to: '台北桃園', dep: '14:30', arr: '17:15' }
   ]);
   
-  // 更新：寫入完整住宿資訊
-  const [stays, setStays] = useStorageState(`${appId}:stays`, [
+  const [stays, setStays] = useCloudState(`${appId}:stays`, [
     { id: 1, name: 'UH Continental CenterPoint', checkIn: '06/06', checkOut: '06/10', mapUrl: 'https://maps.app.goo.gl/tniUPpQDWuPtW4oQ6' },
     { id: 2, name: '三井花園飯店五反田', checkIn: '06/10', checkOut: '06/14', mapUrl: 'https://maps.app.goo.gl/Zw8Apv464GyRTnKG9' }
   ]);
 
-  // 更新：寫入 6/6 ~ 6/10 釜山完整行程與時間軸
-  const [globalItinerary, setGlobalItinerary] = useStorageState(`${appId}:globalItinerary`, [
+  const [globalItinerary, setGlobalItinerary] = useCloudState(`${appId}:globalItinerary`, [
     // Day 1
     { id: 101, date: '06/06', time: '10:30', name: '抵達飯店 & 寄放行李', category: '住宿', mapUrl: '', note: '從機場叫兩台計程車直達 UH Continental。飯店位置極佳，寄完行李可以先在沙灘前拍第一組 6 人合照。', lastEdited: '管理員', photos: [], createdAt: 1 },
-    { id: 102, date: '06/06', time: '12:00', name: '午餐：海雲台傳統市場', category: '美食', mapUrl: '', note: '市場就在飯店旁邊\n必吃推薦：尚國家飯捲 (Sang-guk-ine) 的辣炒年糕與炸物、釜山道地的豬肉湯飯。', lastEdited: '管理員', photos: [], createdAt: 2 },
+    { id: 102, date: '06/06', time: '12:00', name: '午餐：海雲台傳統市場', category: '美食', mapUrl: '', note: '市場就在飯店旁邊\n必吃推薦：尚國家饭捲 (Sang-guk-ine) 的辣炒年糕與炸物、釜山道地的豬肉湯飯。', lastEdited: '管理員', photos: [], createdAt: 2 },
     { id: 103, date: '06/06', time: '14:00', name: 'Centum City 購物 & Spa Land 汗蒸幕', category: '景點', mapUrl: '', note: 'Spa Land (VBP景點)：號稱「汗蒸幕界的愛馬仕」，有 22 個不同溫度的房型。紅眼班機後在這裡睡午覺是最好的恢復方式。\n\n新世界百貨：逛完 Spa Land 直接逛百貨。B2 樓層有最多韓系潮牌 (Matin Kim, Marithé 等)，8 樓則是新世界免稅店。', lastEdited: '管理員', photos: [], createdAt: 3 },
     { id: 104, date: '06/06', time: '19:00', name: '廣安里海水浴場', category: '景點', mapUrl: '', note: '搭計程車 15 分鐘\n必做清單：廣安大橋夜景、在沙灘上玩仙女棒。', lastEdited: '管理員', photos: [], createdAt: 4 },
     { id: 105, date: '06/06', time: '20:00', name: '廣安里 M 無人機秀 (週六限定)', category: '景點', mapUrl: '', note: '必看提醒：這是釜山週六最大的重頭戲，數百台無人機會在空中變換圖案。', lastEdited: '管理員', photos: [], createdAt: 5 },
@@ -142,14 +208,14 @@ export function MemberProvider({ children }) {
     { id: 503, date: '06/10', time: '07:50', name: '飛往東京成田 (BX 112)', category: '交通', mapUrl: '', note: '', lastEdited: '管理員', photos: [], createdAt: 25 },
   ]);
 
-  const [shoppingList, setShoppingList] = useStorageState(`${appId}:shoppingList`, []);
-  const [sharedTodos, setSharedTodos] = useStorageState(`${appId}:sharedTodos`, []);
-  const [sharedWallet, setSharedWallet] = useStorageState(`${appId}:sharedWallet`, []);
-  const [sharedNotes, setSharedNotes] = useStorageState(`${appId}:sharedNotes`, []);
+  const [shoppingList, setShoppingList] = useCloudState(`${appId}:shoppingList`, []);
+  const [sharedTodos, setSharedTodos] = useCloudState(`${appId}:sharedTodos`, []);
+  const [sharedWallet, setSharedWallet] = useCloudState(`${appId}:sharedWallet`, []);
+  const [sharedNotes, setSharedNotes] = useCloudState(`${appId}:sharedNotes`, []);
 
-  // Per-member personal data
-  const [allPersonalWallets, setAllPersonalWallets] = useStorageState(`${appId}:allPersonalWallets`, {});
-  const [allPersonalNotes, setAllPersonalNotes] = useStorageState(`${appId}:allPersonalNotes`, {});
+  // 個人隨手記帳與筆記依然放上雲端，以大物件格式依照各別成員 ID 區隔
+  const [allPersonalWallets, setAllPersonalWallets] = useCloudState(`${appId}:allPersonalWallets`, {});
+  const [allPersonalNotes, setAllPersonalNotes] = useCloudState(`${appId}:allPersonalNotes`, {});
 
   const personalWallet = currentMember ? (allPersonalWallets[currentMember.id] || []) : [];
   const setPersonalWallet = useCallback((valOrFn) => {
@@ -271,7 +337,7 @@ const Modal = ({ isOpen, onClose, title, children }) => {
 // ─── FormField ────────────────────────────────────────────────────────────────
 const FormField = ({ label, type = 'text', value, onChange, placeholder, options }) => (
   <div className="mb-3 w-full shrink-0">
-    <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">{label}</label>
+    <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block"> {label}</label>
     {type === 'textarea' ? (
       <textarea value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="w-full bg-white border border-slate-200 rounded-2xl p-4 font-semibold text-slate-700 focus:ring-2 focus:ring-blue-100 focus:border-blue-300 outline-none resize-none min-h-[70px] text-sm transition-all shadow-sm" />
     ) : type === 'select' ? (
@@ -335,12 +401,11 @@ const getCategoryColor = (cat) => {
 
 // ─── HomePage ─────────────────────────────────────────────────────────────────
 const HomePage = ({ onNavigate }) => {
-  const { trips, setTrips, flights, setFlights, stays, setStays, globalItinerary, sharedWallet, personalWallet, currentMember } = useMember();
+  const { trips, setTrips, flights, setFlights, stays, setStays, globalItinerary, sharedWallet, currentMember } = useMember();
   const [modal, setModal] = useState({ type: null, data: null });
   const [confirmDel, setConfirmDel] = useState(null);
   const isAdmin = currentMember?.role === '管理員';
 
-  // 修正：首頁餘額僅計算共用錢包 (sharedWallet)，排除個人記帳
   const walletBalances = useMemo(() => {
     const totals = { JPY: 0, KRW: 0, TWD: 0 };
     sharedWallet.forEach(item => {
@@ -493,12 +558,7 @@ const HomePage = ({ onNavigate }) => {
           <>
             <div className="grid grid-cols-2 gap-3">
               <FormField label="航班號" value={modal.data?.no} onChange={v => setModal({ ...modal, data: { ...modal.data, no: v } })} />
-              <FormField 
-  label="日期"
-  value={modal.data?.date}
-  onChange={v => setModal({ ...modal, data: { ...modal.data, date: v } })} 
-/>
-
+              <FormField label="日期" value={modal.data?.date} onChange={v => setModal({ ...modal, data: { ...modal.data, date: v } })} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <FormField label="出發地" value={modal.data?.from} onChange={v => setModal({ ...modal, data: { ...modal.data, from: v } })} />
@@ -532,7 +592,7 @@ const HomePage = ({ onNavigate }) => {
 const TripPage = ({ onDownload }) => {
   const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember } = useMember();
   const [selectedDate, setSelectedDate] = useState(() => getSmartDate(tripDates));
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'map'
+  const [viewMode, setViewMode] = useState('list');
   const [activeMapItem, setActiveMapItem] = useState(null);
   
   const [modal, setModal] = useState({ type: null, data: null });
@@ -541,11 +601,9 @@ const TripPage = ({ onDownload }) => {
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [dateConfirmDel, setDateConfirmDel] = useState(null);
   
-  // 預覽圖片狀態
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
 
-  // 修正：取消空頁籤隱藏邏輯，讓所有日期都正常顯示
   const visibleTripDates = tripDates;
 
   const filteredItems = useMemo(() => {
@@ -554,7 +612,6 @@ const TripPage = ({ onDownload }) => {
     return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   }, [globalItinerary, selectedDate]);
 
-  // 地圖模式更新所選項目
   useEffect(() => {
     if (viewMode === 'map' && filteredItems.length > 0) {
       if (!activeMapItem || !filteredItems.find(i => i.id === activeMapItem.id)) {
@@ -717,7 +774,8 @@ const TripPage = ({ onDownload }) => {
             {tempPhotos.length < 5 && <button onClick={() => document.getElementById('trip-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
           </div>
           <input type="file" id="trip-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = () => setTempPhotos(p => p.length < 5 ? [...p, r.result] : p); r.readAsDataURL(file); });
+            // 🌟 核心修正：呼叫自動相片壓縮
+            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => p.length < 5 ? [...p, compressed] : p); }; r.readAsDataURL(file); });
           }} />
         </div>
         <button onClick={() => {
@@ -743,14 +801,13 @@ const FoodPage = ({ onDownload }) => {
   const [arrangedStatus, setArrangedStatus] = useState('待安排');
   const [subTab, setSubTab] = useState('釜山');
   
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'map'
+  const [viewMode, setViewMode] = useState('list');
   const [activeMapItem, setActiveMapItem] = useState(null);
   
   const [modal, setModal] = useState({ type: null, data: null });
   const [tempPhotos, setTempPhotos] = useState([]);
   const [confirmDel, setConfirmDel] = useState(null);
 
-  // 預覽圖片狀態
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
 
@@ -759,7 +816,6 @@ const FoodPage = ({ onDownload }) => {
     else setSubTab('釜山');
   }, [arrangedStatus, tripDates]);
 
-  // 修正：取消空頁籤隱藏邏輯，在「已安排」模式下顯示所有有效的旅遊天數
   const visibleFoodDates = useMemo(() => {
     return tripDates.filter(d => d !== '待安排');
   }, [tripDates]);
@@ -774,7 +830,6 @@ const FoodPage = ({ onDownload }) => {
     return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
   }, [globalItinerary, arrangedStatus, subTab]);
 
-  // 地圖模式更新所選項目
   useEffect(() => {
     if (viewMode === 'map' && foodList.length > 0) {
       if (!activeMapItem || !foodList.find(i => i.id === activeMapItem.id)) {
@@ -908,7 +963,8 @@ const FoodPage = ({ onDownload }) => {
             {tempPhotos.length < 5 && <button onClick={() => document.getElementById('food-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
           </div>
           <input type="file" id="food-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = () => setTempPhotos(p => p.length < 5 ? [...p, r.result] : p); r.readAsDataURL(file); });
+            // 🌟 核心修正：呼叫自動相片壓縮
+            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => p.length < 5 ? [...p, compressed] : p); }; r.readAsDataURL(file); });
           }} />
         </div>
         <button onClick={() => {
@@ -947,7 +1003,7 @@ const ShoppingPage = ({ onDownload }) => {
   const [viewMemberId, setViewMemberId] = useState(currentMember?.id);
   const [cityTab, setCityTab] = useState('釜山');
   
-  const [viewMode, setViewMode] = useState('list'); // 'list' | 'map'
+  const [viewMode, setViewMode] = useState('list');
   const [activeMapItem, setActiveMapItem] = useState(null);
   
   const [modal, setModal] = useState({ type: null, data: null });
@@ -955,7 +1011,6 @@ const ShoppingPage = ({ onDownload }) => {
   const [boughtModal, setBoughtModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
 
-  // 預覽圖片狀態
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
 
@@ -968,7 +1023,6 @@ const ShoppingPage = ({ onDownload }) => {
 
   const isOwner = viewMemberId === currentMember?.id;
 
-  // 地圖模式更新所選項目
   useEffect(() => {
     if (viewMode === 'map' && sortedList.length > 0) {
       if (!activeMapItem || !sortedList.find(i => i.id === activeMapItem.id)) {
@@ -1044,7 +1098,6 @@ const ShoppingPage = ({ onDownload }) => {
     <div className="relative animate-in fade-in pb-28">
       <div className="sticky top-0 z-30 px-4 pt-3 pb-2 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm flex flex-col gap-1">
         <div className="flex items-center justify-between pl-1 pr-1">
-          {/* 修正：此處加上 py-2 px-1 留出足夠垂直空間，防止放大效果與 ring 框線被滾動條裁切 */}
           <div className="flex items-center gap-4 overflow-x-auto no-scrollbar flex-1 py-2 px-1">
             {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
               <button key={m.id} onClick={() => setViewMemberId(m.id)} className={`flex-shrink-0 flex flex-col items-center gap-1.5 transition-all ${viewMemberId === m.id ? 'scale-105' : 'opacity-50 grayscale hover:grayscale-0 hover:opacity-80'}`}>
@@ -1053,7 +1106,6 @@ const ShoppingPage = ({ onDownload }) => {
               </button>
             ))}
           </div>
-          {/* 地圖切換按鈕 */}
           <div className="flex bg-white rounded-full p-1 border border-pink-100 shadow-sm shrink-0 ml-4">
             <button onClick={() => setViewMode('list')} className={`p-1 rounded-full transition-colors ${viewMode === 'list' ? 'bg-pink-100 text-pink-500' : 'text-slate-400 hover:text-slate-600'}`}><List size={14} /></button>
             <button onClick={() => setViewMode('map')} className={`p-1 rounded-full transition-colors ${viewMode === 'map' ? 'bg-pink-100 text-pink-500' : 'text-slate-400 hover:text-slate-600'}`}><Map size={14} /></button>
@@ -1173,7 +1225,8 @@ const ShoppingPage = ({ onDownload }) => {
             {tempPhotos.length < 5 && <button onClick={() => document.getElementById('shop-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
           </div>
           <input type="file" id="shop-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = () => setTempPhotos(p => [...p, r.result]); r.readAsDataURL(file); });
+            // 🌟 核心修正：呼叫自動相片壓縮
+            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => [...p, compressed]); }; r.readAsDataURL(file); });
           }} />
         </div>
         <button onClick={() => {
@@ -1201,14 +1254,14 @@ const ShoppingPage = ({ onDownload }) => {
         }} className="w-full bg-pink-500 text-white font-bold py-4 rounded-2xl shadow-md active:scale-95 mt-1 text-base hover:bg-pink-600 transition-colors">確認儲存清單</button>
       </Modal>
 
-<BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
+      <BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
       <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} title={confirmDel?.title} message={confirmDel?.message} />
       <PhotoViewerModal isOpen={!!viewerPhotos} onClose={() => setViewerPhotos(null)} photos={viewerPhotos} initialIndex={viewerIndex} />
     </div>
   );
 };
 
-// ─── BoughtModal (被不小心刪掉的計算機記帳視窗) ──────────────────────────────
+// ─── BoughtModal ──────────────────────────────────────────────────────────────
 const BoughtModal = ({ isOpen, onClose, onConfirm }) => {
   const [price, setPrice] = useState('');
   const [currency, setCurrency] = useState('JPY');
@@ -1275,7 +1328,6 @@ const WalletTab = ({ onDownload }) => {
   const activeWallet = subTab === '共用錢包' ? sharedWallet : viewPersonalWallet;
   const setActiveWallet = subTab === '共用錢包' ? setSharedWallet : (isOwner ? setPersonalWallet : () => {});
 
-  // 🌟 嚴格邏輯：動態抓取「有帳目」的日期，沒有帳目就絕對不會有頁籤
   const visibleWalletDates = useMemo(() => {
     return [...new Set(activeWallet.map(item => item.date))].sort();
   }, [activeWallet]);
@@ -1285,7 +1337,6 @@ const WalletTab = ({ onDownload }) => {
     return `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
   });
 
-  // 當可視頁籤更新時，如果現在選的日期已經沒帳目了（被隱藏），自動切到最新的有帳目日期
   useEffect(() => {
     if (visibleWalletDates.length > 0 && !visibleWalletDates.includes(selectedDate)) {
       setSelectedDate(visibleWalletDates[visibleWalletDates.length - 1]);
@@ -1337,7 +1388,6 @@ const WalletTab = ({ onDownload }) => {
     });
   };
 
-  // 🌟 一鍵刪除該日期底下所有帳目
   const handleDeleteDate = (d) => {
     setDateConfirmDel({
       fn: () => {
@@ -1428,7 +1478,6 @@ const WalletTab = ({ onDownload }) => {
                   <span className={`${c.badge} text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm`}>{item.currency}</span>
                   <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border bg-white ${isIncome ? 'text-red-500 border-red-200' : 'text-blue-500 border-blue-200'}`}>{item.type}</span>
                 </div>
-                {/* 🌟 項目名稱已放大回 text-base */}
                 <h4 className="text-base font-bold text-slate-800 mb-1 leading-tight">{item.name}</h4>
                 {item.note && <p className="text-xs text-slate-600 italic bg-white/70 border-l-4 border-violet-200 p-2 rounded-r-xl mb-1.5">{item.note}</p>}
                 <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1"><History size={10} /> {item.lastEdited}</p>
@@ -1623,7 +1672,6 @@ const NotesTab = ({ onDownload }) => {
   const [tempPhoto, setTempPhoto] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   
-  // 預覽圖片狀態
   const [viewerPhotos, setViewerPhotos] = useState(null);
 
   const activeNotes = subTab === '共用記事' ? sharedNotes : personalNotes;
@@ -1674,7 +1722,8 @@ const NotesTab = ({ onDownload }) => {
 
       <input type="file" id="note-photo-up" className="hidden" accept="image/*" onChange={e => {
         const file = e.target.files[0];
-        if (file) { const r = new FileReader(); r.onloadend = () => { setTempPhoto(r.result); setModal({ type: 'text', data: {} }); }; r.readAsDataURL(file); }
+        // 🌟 核心修正：呼叫自動相片壓縮
+        if (file) { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhoto(compressed); setModal({ type: 'text', data: {} }); }; r.readAsDataURL(file); }
       }} />
 
       <Modal isOpen={!!modal.type} onClose={() => setModal({ type: null, data: null })} title="編輯記事">
@@ -1745,7 +1794,7 @@ const AuthScreen = () => {
 
 // ─── MainLayout ───────────────────────────────────────────────────────────────
 const MainLayout = () => {
-  const { currentMember, logout, allMembers, setAllMembers, updateMember, trips } = useMember();
+  const { currentMember, logout, allMembers, setAllMembers, updateMember } = useMember();
   const [activeTab, setActiveTab] = useState('home');
   const [showSettings, setShowSettings] = useState(false);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
@@ -1792,7 +1841,6 @@ const MainLayout = () => {
           <span className="text-sm font-black text-slate-700 max-w-[80px] truncate tracking-wide">{currentMember?.name}</span>
         </button>
 
-         {/* 置中大標題與緊鄰的下載按鈕 */}
         <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
           <h1 className="text-lg font-black text-slate-800 tracking-wider whitespace-nowrap">旅遊小助理</h1>
           {activeTab !== 'home' && (
@@ -1807,7 +1855,6 @@ const MainLayout = () => {
         </div>
       </header>
 
-      {/* Main Content Area - 移除原先的 pb-[100px]，將間距推至每個頁面內容底部 */}
       <div className="flex-1 overflow-y-auto relative no-scrollbar bg-slate-50">
         {activeTab === 'home' && <HomePage onNavigate={setActiveTab} />}
         {activeTab === 'trip' && <TripPage onDownload={setDownloadTrigger} />}
@@ -1853,7 +1900,8 @@ const MainLayout = () => {
           </div>
           <input type="file" id="profile-photo-up" className="hidden" accept="image/*" onChange={e => {
             const file = e.target.files[0];
-            if (file) { const r = new FileReader(); r.onloadend = () => setEditPhoto(r.result); r.readAsDataURL(file); }
+            // 🌟 核心修正：呼叫自動相片壓縮
+            if (file) { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result, 200, 200); setEditPhoto(compressed); }; r.readAsDataURL(file); }
           }} />
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">點擊更換頭像</p>
         </div>
