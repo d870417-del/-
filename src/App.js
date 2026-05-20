@@ -9,7 +9,8 @@ import {
 import { db } from './firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
-const appId = 'travel-pro-v42-final';
+const IS_DEV = false; // 🔧 測試時改 true，上線時改 false
+const appId = IS_DEV ? 'travel-pro-v42-DEV' : 'travel-pro-v42-final';
 
 // ─── 圖片自動壓縮工具（防止圖片過大撐爆 Firestore 1MB 限制） ───────────────────
 const compressImageBase64 = (base64Str, maxWidth = 600, maxHeight = 600) => {
@@ -20,20 +21,29 @@ const compressImageBase64 = (base64Str, maxWidth = 600, maxHeight = 600) => {
     }
     const img = new Image();
     img.src = base64Str;
+    img.onerror = () => {
+      console.error('圖片載入失敗，回傳原始資料');
+      resolve(base64Str); // 失敗時回傳原圖，避免 Promise 永遠 pending
+    };
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let width = img.width;
-      let height = img.height;
-      if (width > height) {
-        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
-      } else {
-        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
+      try {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > height) {
+          if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
+        } else {
+          if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.6)); // 壓縮為 60% 畫質的 JPEG
+      } catch (err) {
+        console.error('圖片壓縮失敗:', err);
+        resolve(base64Str);
       }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.6)); // 壓縮為 60% 畫質的 JPEG
     };
   });
 };
@@ -41,26 +51,37 @@ const compressImageBase64 = (base64Str, maxWidth = 600, maxHeight = 600) => {
 // ─── 遠端即時同步 Firebase Firestore Hook ───────────────────────────────────
 const useCloudState = (key, initial) => {
   const [state, setState] = useState(initial);
-  const [loading, setLoading] = useState(true); // 🌟 新增：用來記錄是不是還在載入
+  const [loading, setLoading] = useState(true);
+  // 用 ref 固定 initial，避免每次 render 傳入新的物件/陣列導致重複訂閱
+  const initialRef = useRef(initial);
 
   useEffect(() => {
     const safeKey = key.replace(/:/g, '_');
     const docRef = doc(db, "travel_cooperation_v42", safeKey);
 
-    // 即時監聽雲端：只要任何一人修改，全體 6 人的畫面會在 1 秒內自動更新
+    // 連線逾時保護：10 秒內若 Firebase 沒有回應，強制結束 loading
+    const timeoutId = setTimeout(() => {
+      console.warn(`Firebase 連線逾時 (key: ${safeKey})，使用本地預設值`);
+      setLoading(false);
+    }, 10000);
+
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
-    if (docSnap.exists()) {
-    const val = docSnap.data().value;
-     // ✅ 加這行：確保拿到的值是陣列才 setState
-    setState(Array.isArray(val) ? val : (val ?? initial));
-    } else {
-    setDoc(docRef, { value: initial }).catch(err => console.error(err));
-    }
-    setLoading(false);
+      if (docSnap.exists()) {
+        setState(docSnap.data().value);
+      } else {
+        setDoc(docRef, { value: initial }).catch(err => console.error(err));
+      }
+      setLoading(false); // 🌟 關鍵：只要 Firebase 第一次回應了，就關閉 loading！
+    }, (error) => {
+      console.error("Firebase 監聽失敗:", error);
+      setLoading(false);
     });
 
-    return () => unsubscribe();
-  }, [key]);
+    return () => {
+      clearTimeout(timeoutId);
+      unsubscribe();
+    };
+  }, [key]); // initial 改用 ref，不需放進依賴陣列
 
   const set = useCallback((valOrFn) => {
     const safeKey = key.replace(/:/g, '_');
@@ -73,7 +94,7 @@ const useCloudState = (key, initial) => {
     });
   }, [key]);
 
-  return [state, set, loading]; // 🌟 記得把 loading 傳出去
+  return [state, set, loading];
 };
 
 // ─── 輔助元件：地圖嵌入 (Map Embed) ──────────────────────────────────────────
@@ -85,7 +106,7 @@ const MapEmbed = ({ query }) => (
     scrolling="no"
     marginHeight="0"
     marginWidth="0"
-    src={`https://maps.google.com/maps?q=${encodeURIComponent(query)}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
+    src={`http://googleusercontent.com/maps.google.com/?q=${encodeURIComponent(query)}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
     className="grayscale-[10%] contrast-[1.05]"
   ></iframe>
 );
@@ -156,11 +177,8 @@ const MemberContext = createContext();
 
 export function MemberProvider({ children }) {
   const [initName, setInitName] = useState('');
-  
-  // 🔒 只有登入身分維持不變（留在各自的手機隨身碟裡）
   const [currentMember, setCurrentMember] = useStorageState(`${appId}:member`, null);
   
-  // 🌐 以下全部無痛改成雲端同步 Hook，實現 6 人即時共享！
   const [allMembers, setAllMembers, isMembersLoading] = useCloudState(`${appId}:allMembers`, []);
   const [tripDates, setTripDates] = useCloudState(`${appId}:tripDates`, ['待安排', '06/06', '06/07', '06/08', '06/09', '06/10', '06/11', '06/12', '06/13', '06/14']);
   const [walletDates, setWalletDates] = useCloudState(`${appId}:walletDates`, []);
@@ -215,7 +233,16 @@ export function MemberProvider({ children }) {
   const [sharedWallet, setSharedWallet] = useCloudState(`${appId}:sharedWallet`, []);
   const [sharedNotes, setSharedNotes] = useCloudState(`${appId}:sharedNotes`, []);
 
-  // 個人隨手記帳與筆記依然放上雲端，以大物件格式依照各別成員 ID 區隔
+  // ── 美食選項（城市、地區、食物類型）存在 Firebase，全員可增刪改 ──
+  const [foodOptions, setFoodOptions] = useCloudState(`${appId}:foodOptions`, {
+    cities: ['釜山', '東京'],
+    districts: {
+      '釜山': ['海雲台', '西面', '南浦洞', '廣安里', '青沙浦', '甘川洞', '松島', '機張'],
+      '東京': ['涉谷', '新宿', '銀座', '淺草', '原宿', '表參道', '六本木', '秋葉原', '池袋', '上野', '築地', '豐洲'],
+    },
+    foodTypes: ['燒肉', '豬肉湯飯', '甜點咖啡', '拉麵', '壽司', '居酒屋', '海鮮', '炸雞', '韓式料理', '和食'],
+  });
+
   const [allPersonalWallets, setAllPersonalWallets] = useCloudState(`${appId}:allPersonalWallets`, {});
   const [allPersonalNotes, setAllPersonalNotes] = useCloudState(`${appId}:allPersonalNotes`, {});
 
@@ -256,7 +283,7 @@ export function MemberProvider({ children }) {
   const value = {
     currentMember, allMembers, setAllMembers, login, logout, updateMember,
     createInitialAdmin, initName, setInitName,
-    isMembersLoading, // 🌟 傳出全域載入狀態
+    isMembersLoading,
     globalItinerary, setGlobalItinerary,
     tripDates, setTripDates, walletDates, setWalletDates,
     trips, setTrips, flights, setFlights, stays, setStays,
@@ -264,6 +291,7 @@ export function MemberProvider({ children }) {
     sharedTodos, setSharedTodos,
     sharedWallet, setSharedWallet, sharedNotes, setSharedNotes,
     personalWallet, setPersonalWallet, allPersonalWallets, personalNotes, setPersonalNotes,
+    foodOptions, setFoodOptions,
   };
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
@@ -361,11 +389,16 @@ const FormField = ({ label, type = 'text', value, onChange, placeholder, options
 // ─── Avatar ───────────────────────────────────────────────────────────────────
 const Avatar = ({ member, className = 'w-10 h-10' }) => {
   if (!member) return null;
-  return member.photo ? (
-    <img src={member.photo} alt={member.name} className={`${className} object-cover rounded-2xl border-2 border-white shadow-sm`} />
-  ) : (
-    <div className={`${className} rounded-2xl flex items-center justify-center text-white font-black shadow-sm border-2 border-white`} style={{ backgroundColor: member.avatarColor }}>
-      {member.name.charAt(0).toUpperCase()}
+  if (member.photo) {
+    return (
+      <img src={member.photo} alt={member.name || 'User'} className={`${className} object-cover rounded-2xl border-2 border-white shadow-sm`} />
+    );
+  }
+  const safeName = (member.name || 'U').trim();
+  const firstChar = safeName.charAt(0).toUpperCase();
+  return (
+    <div className={`${className} rounded-2xl flex items-center justify-center text-white font-black shadow-sm border-2 border-white`} style={{ backgroundColor: member.avatarColor || '#3b82f6' }}>
+      {firstChar}
     </div>
   );
 };
@@ -401,6 +434,7 @@ const getCategoryColor = (cat) => {
   };
   return map[cat] || map['其他'];
 };
+
 // ─── HomePage ─────────────────────────────────────────────────────────────────
 const HomePage = ({ onNavigate }) => {
   const { trips, setTrips, flights, setFlights, stays, setStays, globalItinerary, sharedWallet, currentMember } = useMember();
@@ -409,19 +443,36 @@ const HomePage = ({ onNavigate }) => {
 
   const walletBalances = useMemo(() => {
     const totals = { JPY: 0, KRW: 0, TWD: 0 };
-    sharedWallet.forEach(item => {
-      const amt = Number(item.amount) || 0;
-      if (item.type === '存入') totals[item.currency] += amt; else totals[item.currency] -= amt;
-    });
+    if (Array.isArray(sharedWallet)) {
+      sharedWallet.forEach(item => {
+        const amt = Number(item?.amount) || 0;
+        if (item?.type === '存入') totals[item.currency] += amt; else totals[item.currency] -= amt;
+      });
+    }
     return totals;
   }, [sharedWallet]);
 
+// 🌟 加入 100% 防呆的安全版本
   const nextTripItem = useMemo(() => {
     const now = new Date().setHours(0, 0, 0, 0);
-    return [...globalItinerary]
-      .filter(i => i.date !== '待安排')
-      .sort((a, b) => a.date.localeCompare(b.date) || (a.time || '').localeCompare(b.time || ''))
-      .find(i => new Date(`2026/${i.date}`).getTime() >= now);
+    return [...(globalItinerary || [])]
+      // 1. 先把沒有 date 的瑕疵資料過濾掉
+      .filter(i => i && i.date && i.date !== '待安排')
+      // 2. 排序時加上 || '' 確保絕對不會遇到 undefined 崩潰
+      .sort((a, b) => {
+        const dateA = a?.date || '';
+        const dateB = b?.date || '';
+        const timeA = a?.time || '';
+        const timeB = b?.time || '';
+        return dateA.localeCompare(dateB) || timeA.localeCompare(timeB);
+      })
+      .find(i => {
+        try {
+          return new Date(`2026/${i.date}`).getTime() >= now;
+        } catch(e) {
+          return false;
+        }
+      });
   }, [globalItinerary]);
 
   const getDDay = (targetDate) => Math.ceil((new Date(targetDate) - new Date().setHours(0, 0, 0, 0)) / 86400000);
@@ -446,7 +497,7 @@ const HomePage = ({ onNavigate }) => {
         {[['JPY', 'bg-rose-50', 'text-rose-600', 'border-rose-100'], ['KRW', 'bg-indigo-50', 'text-indigo-600', 'border-indigo-100'], ['TWD', 'bg-emerald-50', 'text-emerald-600', 'border-emerald-100']].map(([cur, bg, tc, bc]) => (
           <div key={cur} className={`${bg} border ${bc} p-4 rounded-3xl text-center shadow-sm`}>
             <p className={`text-xs font-black ${tc} mb-1 uppercase tracking-widest opacity-70`}>{cur}</p>
-            <p className={`text-sm font-black ${tc}`}>{walletBalances[cur] >= 0 ? '+' : ''}{walletBalances[cur].toLocaleString()}</p>
+            <p className={`text-sm font-black ${tc}`}>{walletBalances[cur] >= 0 ? '+' : ''}{(walletBalances[cur] || 0).toLocaleString()}</p>
           </div>
         ))}
       </section>
@@ -454,12 +505,10 @@ const HomePage = ({ onNavigate }) => {
       <section>
         <div className="flex justify-between items-center mb-3 px-1">
           <span className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><Clock size={14} /> 旅遊倒數計時</span>
-          {/* 🌟 開放給所有人新增 */}
           <button onClick={() => setModal({ type: 'trip', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>
         </div>
         {trips.map(t => (
           <div key={t.id} className="relative bg-gradient-to-br from-blue-500 to-sky-400 p-6 rounded-[2rem] text-white shadow-md mb-3 group overflow-hidden">
-            {/* 🌟 開放給所有人編輯與刪除，並加上精緻防呆文字 */}
             <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-80 hover:opacity-100 transition-opacity">
               <button onClick={() => setModal({ type: 'trip', data: t })} className="p-2 bg-white/20 hover:bg-white/40 rounded-full backdrop-blur-sm transition-colors"><Edit2 size={14} /></button>
               <button onClick={() => setConfirmDel({ title: '確認刪除旅行計畫', message: `確定要刪除「${t.title}」嗎？`, fn: () => setTrips(p => p.filter(x => x.id !== t.id)) })} className="p-2 bg-white/20 hover:bg-red-500/80 rounded-full backdrop-blur-sm transition-colors"><Trash2 size={14} /></button>
@@ -492,12 +541,10 @@ const HomePage = ({ onNavigate }) => {
       <section className="space-y-4">
         <div className="flex justify-between items-center px-1">
           <span className="font-black text-slate-400 text-xs uppercase tracking-widest">航班資訊</span>
-          {/* 🌟 開放給所有人新增航班 */}
           <button onClick={() => setModal({ type: 'flight', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>
         </div>
         {flights.map(f => (
           <div key={f.id} className="relative bg-white border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm hover:shadow-md transition-shadow group">
-            {/* 🌟 開放給所有人編輯與刪除航班 */}
             <div className="absolute top-4 right-4 flex gap-2 z-10 opacity-70 hover:opacity-100 transition-opacity">
               <button onClick={() => setModal({ type: 'flight', data: f })} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-colors border border-slate-100"><Edit2 size={14} /></button>
               <button onClick={() => setConfirmDel({ title: '確認刪除航班資訊', message: `確定要刪除航班「${f.no}」嗎？`, fn: () => setFlights(p => p.filter(x => x.id !== f.id)) })} className="p-2 bg-red-50 hover:bg-red-100 rounded-full text-red-400 transition-colors border border-red-100"><Trash2 size={14} /></button>
@@ -510,7 +557,7 @@ const HomePage = ({ onNavigate }) => {
               <div className="flex justify-between items-center px-2 pr-16">
                 <p className="text-xl font-black text-slate-700 tracking-tighter truncate max-w-[80px] text-center">{f.from}</p>
                 <div className="flex-1 border-b-2 border-dotted border-slate-200 mx-5 relative mb-2">
-                  <Plane size={18} className="absolute -top-2.5 left-1/2 -translate-x-1/2 text-slate-300 rotate-90 bg-white px-1" />
+               <Plane size={18} className="absolute -top-3 left-1/2 -translate-x-1/2 text-slate-300 bg-white px-1 -scale-x-100" />
                 </div>
                 <p className="text-xl font-black text-slate-700 tracking-tighter truncate max-w-[80px] text-center">{f.to}</p>
               </div>
@@ -524,12 +571,10 @@ const HomePage = ({ onNavigate }) => {
 
         <div className="flex justify-between items-center px-1 pt-2">
           <span className="font-black text-slate-400 text-xs uppercase tracking-widest">下榻飯店</span>
-          {/* 🌟 開放給所有人新增飯店 */}
           <button onClick={() => setModal({ type: 'stay', data: {} })} className="text-blue-500 hover:text-blue-600 active:scale-90 transition-colors"><Plus size={20} /></button>
         </div>
         {stays.map(s => (
           <div key={s.id} className="relative bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow flex items-center justify-between group">
-            {/* 🌟 開放給所有人編輯與刪除飯店 */}
             <div className="absolute top-2 right-2 flex gap-1.5 z-10 opacity-70 hover:opacity-100 transition-opacity">
               <button onClick={() => setModal({ type: 'stay', data: s })} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-500 transition-colors border border-slate-100"><Edit2 size={12} /></button>
               <button onClick={() => setConfirmDel({ title: '確認刪除飯店資訊', message: `確定要刪除「${s.name}」嗎？`, fn: () => setStays(p => p.filter(x => x.id !== s.id)) })} className="p-2 bg-red-50 hover:bg-red-100 rounded-full text-red-400 transition-colors border border-red-100"><Trash2 size={12} /></button>
@@ -576,7 +621,9 @@ const HomePage = ({ onNavigate }) => {
             <FormField label="飯店名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} />
             <div className="grid grid-cols-2 gap-3">
               <FormField label="入住日期" value={modal.data?.checkIn} onChange={v => setModal({ ...modal, data: { ...modal.data, checkIn: v } })} />
-              <FormField label="退房日期" value={modal.data?.checkOut} onChange={v => setModal({ ...modal, data: { ...modal.data, checkOut: v } })} />
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="退房日期" value={modal.data?.checkOut} onChange={v => setModal({ ...modal, data: { ...modal.data, checkOut: v } })} />
+              </div>
             </div>
             <FormField label="Map 連結" value={modal.data?.mapUrl} onChange={v => setModal({ ...modal, data: { ...modal.data, mapUrl: v } })} />
           </>
@@ -584,14 +631,14 @@ const HomePage = ({ onNavigate }) => {
         <button onClick={() => handleSave(modal.data)} className="w-full bg-blue-500 text-white font-black py-4 rounded-2xl shadow-md active:scale-95 mt-3 text-base hover:bg-blue-600 transition-colors">確認儲存</button>
       </Modal>
 
-      {/* 🌟 這裡傳入動態的 title 與 message，讓刪除提示更清晰 */}
       <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} title={confirmDel?.title} message={confirmDel?.message} />
     </div>
   );
 };
+
 // ─── TripPage ─────────────────────────────────────────────────────────────────
 const TripPage = ({ onDownload }) => {
-  const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember, allMembers } = useMember(); // 🌟 補上 allMembers
+  const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember, allMembers } = useMember();
   const [selectedDate, setSelectedDate] = useState(() => getSmartDate(tripDates));
   const [viewMode, setViewMode] = useState('list');
   const [activeMapItem, setActiveMapItem] = useState(null);
@@ -627,7 +674,7 @@ const filteredItems = useMemo(() => {
     onDownload(() => () => {
       let text = `行程清單 - ${selectedDate}\n\n`;
       filteredItems.forEach(i => {
-        text += `[${i.time || '待定'}] ${i.name} (${i.category})\n`;
+        text += `[${i.time || '待定'}] ${i.name}${i.location ? ` @ ${i.location}` : ''} (${i.category})\n`;
         if (i.note) text += `備註: ${i.note}\n`;
         if (i.mapUrl) text += `地圖: ${i.mapUrl}\n`;
         text += '---------------------------\n';
@@ -651,6 +698,17 @@ const filteredItems = useMemo(() => {
         if (selectedDate === d) setSelectedDate('待安排');
       }
     });
+  };
+
+  // 地圖搜尋字串：優先用 location，其次用 name
+  const getMapQuery = (item) => item.location || item.name;
+
+  // 一鍵開啟這天所有地點
+  const openAllOnGoogleMaps = () => {
+    const withMap = filteredItems.filter(i => i.mapUrl);
+    if (withMap.length === 1) { window.open(withMap[0].mapUrl, '_blank'); return; }
+    const query = filteredItems.map(getMapQuery).join(' | ');
+    window.open(`https://www.google.com/maps/search/${encodeURIComponent(query)}`, '_blank');
   };
 
   return (
@@ -684,25 +742,46 @@ const filteredItems = useMemo(() => {
 
       {viewMode === 'map' ? (
         <div className="mt-4 px-4 h-[calc(100vh-250px)] flex flex-col animate-in fade-in">
+          {/* 一鍵開啟這天所有地點 */}
+          {filteredItems.length > 0 && (
+            <button onClick={openAllOnGoogleMaps} className="mb-3 w-full py-2.5 bg-blue-500 text-white rounded-2xl text-xs font-black flex items-center justify-center gap-2 hover:bg-blue-600 active:scale-95 transition-all shadow-sm">
+              <MapPin size={14} strokeWidth={2.5} />
+              一鍵開啟 {selectedDate} 全部 {filteredItems.length} 個地點
+            </button>
+          )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
             {activeMapItem ? (
-              <MapEmbed query={activeMapItem.name} />
+              <MapEmbed query={getMapQuery(activeMapItem)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無行程可顯示</div>
             )}
           </div>
           {filteredItems.length > 0 && (
             <div className="h-32 mt-4 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
-              {filteredItems.map(item => (
-                <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-64 p-4 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${activeMapItem?.id === item.id ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    {item.time && <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${activeMapItem?.id === item.id ? 'bg-white/20' : 'bg-blue-50 text-blue-600'}`}>{item.time}</span>}
-                    <span className={`text-xs font-bold ${activeMapItem?.id === item.id ? 'text-blue-100' : 'text-slate-400'}`}>{item.category}</span>
+              {filteredItems.map((item, idx) => {
+                const isActive = activeMapItem?.id === item.id;
+                return (
+                  <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-56 p-3.5 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${isActive ? 'bg-blue-500 text-white border-blue-500 scale-105' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${isActive ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-600'}`}>{idx + 1}</span>
+                      {item.time && <span className={`text-[10px] font-black ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>{item.time}</span>}
+                      <span className={`text-[10px] font-bold truncate ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>{item.category}</span>
+                    </div>
+                    <h4 className="font-bold text-sm truncate">{item.name}</h4>
+                    {item.location && (
+                      <p className={`text-[10px] mt-0.5 flex items-center gap-1 ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
+                        <MapPin size={9} />{ item.location}
+                      </p>
+                    )}
+                    {item.mapUrl && (
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className={`mt-1 text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-blue-100' : 'text-blue-400'}`}>
+                        <Navigation size={9} />直接導航
+                      </a>
+                    )}
                   </div>
-                  <h4 className="font-bold text-sm truncate mb-1">{item.name}</h4>
-                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-blue-100' : 'text-slate-400'}`}>{item.note || '無備註'}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -713,10 +792,8 @@ const filteredItems = useMemo(() => {
           )}
           <div className="space-y-4">
             {filteredItems.map((item, idx) => {
-              // 🌟 這裡修正為大括號 `{`，以便進行變數宣告邏輯
               const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '同行隊友' };
               
-              // 🌟 加上明文的 return ( ... JSX ... )
               return (
                 <div key={item.id} className="relative flex gap-3 animate-in slide-in-from-bottom-2">
                   {selectedDate !== '待安排' && (
@@ -735,7 +812,13 @@ const filteredItems = useMemo(() => {
                     </div>
                     <div className="flex justify-between items-start gap-4">
                       <div className="flex-1">
-                        <h4 className="text-base font-bold text-slate-800 leading-tight mb-2">{item.name}</h4>
+                        <h4 className="text-base font-bold text-slate-800 leading-tight mb-1">{item.name}</h4>
+                        {/* 地點顯示 */}
+                        {item.location && (
+                          <p className="flex items-center gap-1 text-xs font-bold text-slate-400 mb-2">
+                            <MapPin size={11} className="text-blue-400 shrink-0" />{item.location}
+                          </p>
+                        )}
                         {item.note && <div className="bg-slate-50 border-l-4 border-blue-300 p-3 mb-3 text-sm text-slate-600 italic rounded-r-2xl whitespace-pre-wrap">{item.note}</div>}
                         {item.photos?.length > 0 && (
                           <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
@@ -744,7 +827,6 @@ const filteredItems = useMemo(() => {
                             ))}
                           </div>
                         )}
-                        {/* 🌟 動態顯示最新頭像與最新改名過後的名字 */}
                         <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
                           <Avatar member={editor} className="w-4 h-4 rounded-md" />
                           <span>{editor.name} 編輯</span>
@@ -766,13 +848,15 @@ const filteredItems = useMemo(() => {
 
       <button onClick={() => { setModal({ type: 'item', data: { category: '景點', date: selectedDate } }); setTempPhotos([]); }} className="fixed bottom-[110px] right-6 w-16 h-16 bg-blue-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-blue-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
 
-      <Modal isOpen={!!modal.type} onClose={() => setModal({ type: null, data: null })} title="編輯行程">
+      <Modal isOpen={!!modal.type} onClose={() => setModal({ type: null, data: null })} title={modal.data?.id ? '編輯行程' : '新增行程'}>
         <div className="grid grid-cols-2 gap-3">
           <FormField label="日期" type="select" options={tripDates} value={modal.data?.date} onChange={v => setModal({ ...modal, data: { ...modal.data, date: v } })} />
           <FormField label="時間（選填）" type="time" value={modal.data?.time} onChange={v => setModal({ ...modal, data: { ...modal.data, time: v } })} />
         </div>
         <FormField label="類別" type="select" options={['景點', '美食', '購物', '交通', '住宿', '換匯', '其他']} value={modal.data?.category} onChange={v => setModal({ ...modal, data: { ...modal.data, category: v } })} />
-        <FormField label="項目名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} />
+        <FormField label="項目名稱" placeholder="例如：看電影、逛街、飯店 Check-in" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} />
+        {/* 地點欄位 */}
+        <FormField label="📍 地點 / 位置（選填）" placeholder="例如：樂天世界、新宿 Toho 影城、海雲台海水浴場" value={modal.data?.location} onChange={v => setModal({ ...modal, data: { ...modal.data, location: v } })} />
         <FormField label="Map 連結（選填）" value={modal.data?.mapUrl} onChange={v => setModal({ ...modal, data: { ...modal.data, mapUrl: v } })} />
         <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} />
         <div className="mb-4">
@@ -809,194 +893,645 @@ const filteredItems = useMemo(() => {
 
 // ─── FoodPage ─────────────────────────────────────────────────────────────────
 const FoodPage = ({ onDownload }) => {
-  const { globalItinerary, setGlobalItinerary, tripDates, currentMember, allMembers } = useMember(); // 🌟 1. 這裡補上了全域的 allMembers
-  const [arrangedStatus, setArrangedStatus] = useState('待安排');
-  const [subTab, setSubTab] = useState('釜山');
-  
+  const { globalItinerary, setGlobalItinerary, tripDates, currentMember, allMembers, foodOptions, setFoodOptions } = useMember();
+
+  // ── foodOptions 安全取值（全部從 Firebase 讀，所有項目都能增刪改）──
+  const citiesPool = foodOptions?.cities || [];
+  const districtsMap = foodOptions?.districts || {};
+  const foodTypesPool = foodOptions?.foodTypes || [];
+  const getDistrictsForCity = useCallback((city) => districtsMap[city] || [], [districtsMap]);
+
+  // ── 頂部篩選狀態 ──
+  const [selectedCity, setSelectedCity] = useState('全部城市');
+  const [selectedDistricts, setSelectedDistricts] = useState([]);
+  const [selectedFoodType, setSelectedFoodType] = useState('全部食物');
   const [viewMode, setViewMode] = useState('list');
   const [activeMapItem, setActiveMapItem] = useState(null);
-  
+
+  // ── 彈出視窗狀態 ──
   const [modal, setModal] = useState({ type: null, data: null });
   const [tempPhotos, setTempPhotos] = useState([]);
   const [confirmDel, setConfirmDel] = useState(null);
-
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
 
-  useEffect(() => {
-    if (arrangedStatus === '已安排') setSubTab(getSmartDate(tripDates.filter(d => d !== '待安排')));
-    else setSubTab('釜山');
-  }, [arrangedStatus, tripDates]);
+  // ── 自訂欄位狀態 ──
+  const [customCity, setCustomCity] = useState('');
+  const [customDistrict, setCustomDistrict] = useState('');
+  const [customFoodType, setCustomFoodType] = useState('');
+  const [showCustomCity, setShowCustomCity] = useState(false);
+  const [showCustomDistrict, setShowCustomDistrict] = useState(false);
+  const [showCustomFoodType, setShowCustomFoodType] = useState(false);
+  const [showManageOptions, setShowManageOptions] = useState(false);
+  const [editingOption, setEditingOption] = useState(null);
 
-  const visibleFoodDates = useMemo(() => {
-    return tripDates.filter(d => d !== '待安排');
-  }, [tripDates]);
+  // ── 所有美食資料 ──
+  const allFoodItems = useMemo(() => globalItinerary.filter(i => i.category === '美食'), [globalItinerary]);
 
-  const foodList = useMemo(() => {
-    const items = globalItinerary.filter(i => {
-      const isFood = i.category === '美食';
-      if (arrangedStatus === '待安排') return isFood && i.date === '待安排' && i.city === subTab;
-      return isFood && i.date === subTab && i.date !== '待安排';
+  // ── 頂部篩選：地區選項（依城市動態切換）──
+  const topDistricts = useMemo(() => {
+    if (selectedCity === '全部城市') return [];
+    return getDistrictsForCity(selectedCity);
+  }, [selectedCity, getDistrictsForCity]);
+
+  // ── 篩選後的美食清單 ──
+  const filteredFoodList = useMemo(() => {
+    return allFoodItems.filter(i => {
+      if (selectedCity !== '全部城市' && i.city !== selectedCity) return false;
+      if (selectedDistricts.length > 0) {
+        const itemDistricts = i.districts || (i.district ? [i.district] : []);
+        if (!selectedDistricts.some(d => itemDistricts.includes(d))) return false;
+      }
+      if (selectedFoodType !== '全部食物' && i.foodType !== selectedFoodType) return false;
+      return true;
+    }).sort((a, b) => {
+      if (a.date === '待安排' && b.date !== '待安排') return 1;
+      if (a.date !== '待安排' && b.date === '待安排') return -1;
+      return (a.createdAt || 0) - (b.createdAt || 0);
     });
-    if (arrangedStatus === '待安排') return items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-  }, [globalItinerary, arrangedStatus, subTab]);
+  }, [allFoodItems, selectedCity, selectedDistricts, selectedFoodType]);
 
+  // ── 地圖模式：activeMapItem 跟著篩選走 ──
   useEffect(() => {
-    if (viewMode === 'map' && foodList.length > 0) {
-      if (!activeMapItem || !foodList.find(i => i.id === activeMapItem.id)) {
-        setActiveMapItem(foodList[0]);
+    if (viewMode === 'map') {
+      if (filteredFoodList.length > 0 && (!activeMapItem || !filteredFoodList.find(i => i.id === activeMapItem.id))) {
+        setActiveMapItem(filteredFoodList[0]);
       }
     }
-  }, [viewMode, foodList]);
+  }, [viewMode, filteredFoodList]);
 
+  // ── 下載 ──
   useEffect(() => {
-    onDownload(() => () => {
-      let text = `美食清單 - ${arrangedStatus} (${subTab})\n\n`;
-      foodList.forEach(i => { text += `[${i.time || '無時間'}] ${i.name}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
-      downloadTextFile(text, `Food_${subTab.replace('/', '-')}`);
+    if (typeof onDownload === 'function') {
+      onDownload(() => () => {
+        let text = `🍜 美食清單 (${selectedCity}${selectedDistricts.length ? ' / ' + selectedDistricts.join('、') : ''} / ${selectedFoodType})\n${'='.repeat(50)}\n\n`;
+        filteredFoodList.forEach((i, idx) => {
+          const districts = (i.districts || []).join('、') || i.district || '未填';
+          text += `${idx + 1}. 【${i.name}】\n   城市: ${i.city || '未填'} | 地區: ${districts}\n   類別: ${i.foodType || '未填'} | 日期: ${i.date || '待安排'} ${i.time || ''}\n`;
+          if (i.mapUrl) text += `   地圖: ${i.mapUrl}\n`;
+          if (i.note) text += `   備註: ${i.note}\n`;
+          text += '-'.repeat(40) + '\n';
+        });
+        downloadTextFile(text, `美食清單_${Date.now()}`);
+      });
+    }
+  }, [filteredFoodList, selectedCity, selectedDistricts, selectedFoodType, onDownload]);
+
+  // ── foodOptions 操作 helpers（城市、地區、食物類型全都能增刪改）──
+  const addCity = (city) => {
+    if (!city.trim() || citiesPool.includes(city)) return;
+    setFoodOptions(prev => ({ ...prev, cities: [...(prev?.cities || []), city.trim()] }));
+  };
+  const renameCity = (oldVal, newVal) => {
+    if (!newVal.trim() || newVal === oldVal) return;
+    setFoodOptions(prev => ({
+      ...prev,
+      cities: (prev?.cities || []).map(c => c === oldVal ? newVal.trim() : c),
+      districts: Object.fromEntries(Object.entries(prev?.districts || {}).map(([k, v]) => [k === oldVal ? newVal.trim() : k, v])),
+    }));
+    setGlobalItinerary(p => p.map(i => i.category === '美食' && i.city === oldVal ? { ...i, city: newVal.trim() } : i));
+    setEditingOption(null);
+  };
+  const deleteCity = (city) => {
+    setFoodOptions(prev => {
+      const { [city]: _, ...rest } = (prev?.districts || {});
+      return { ...prev, cities: (prev?.cities || []).filter(c => c !== city), districts: rest };
     });
-  }, [foodList, arrangedStatus, subTab, onDownload]);
+    setGlobalItinerary(p => p.map(i => i.category === '美食' && i.city === city ? { ...i, city: '' } : i));
+  };
+  const addDistrict = (city, district) => {
+    if (!district.trim()) return;
+    setFoodOptions(prev => {
+      const cur = prev?.districts?.[city] || [];
+      if (cur.includes(district)) return prev;
+      return { ...prev, districts: { ...(prev?.districts || {}), [city]: [...cur, district.trim()] } };
+    });
+  };
+  const renameDistrict = (city, oldVal, newVal) => {
+    if (!newVal.trim() || newVal === oldVal) return;
+    setFoodOptions(prev => ({
+      ...prev,
+      districts: { ...(prev?.districts || {}), [city]: (prev?.districts?.[city] || []).map(d => d === oldVal ? newVal.trim() : d) },
+    }));
+    setGlobalItinerary(p => p.map(i => {
+      if (i.category !== '美食') return i;
+      return { ...i, districts: (i.districts || []).map(d => d === oldVal ? newVal.trim() : d), district: i.district === oldVal ? newVal.trim() : i.district };
+    }));
+    setEditingOption(null);
+  };
+  const deleteDistrict = (city, district) => {
+    setFoodOptions(prev => ({
+      ...prev,
+      districts: { ...(prev?.districts || {}), [city]: (prev?.districts?.[city] || []).filter(d => d !== district) },
+    }));
+    setGlobalItinerary(p => p.map(i => {
+      if (i.category !== '美食') return i;
+      return { ...i, districts: (i.districts || []).filter(d => d !== district), district: i.district === district ? '' : i.district };
+    }));
+  };
+  const addFoodType = (ft) => {
+    if (!ft.trim() || foodTypesPool.includes(ft)) return;
+    setFoodOptions(prev => ({ ...prev, foodTypes: [...(prev?.foodTypes || []), ft.trim()] }));
+  };
+  const renameFoodType = (oldVal, newVal) => {
+    if (!newVal.trim() || newVal === oldVal) return;
+    setFoodOptions(prev => ({ ...prev, foodTypes: (prev?.foodTypes || []).map(f => f === oldVal ? newVal.trim() : f) }));
+    setGlobalItinerary(p => p.map(i => i.category === '美食' && i.foodType === oldVal ? { ...i, foodType: newVal.trim() } : i));
+    setEditingOption(null);
+  };
+  const deleteFoodType = (ft) => {
+    setFoodOptions(prev => ({ ...prev, foodTypes: (prev?.foodTypes || []).filter(f => f !== ft) }));
+    setGlobalItinerary(p => p.map(i => i.category === '美食' && i.foodType === ft ? { ...i, foodType: '' } : i));
+  };
+
+  // ── Google Maps 多點 ──
+  const openAllOnGoogleMaps = () => {
+    const withMap = filteredFoodList.filter(i => i.mapUrl);
+    if (withMap.length === 1) { window.open(withMap[0].mapUrl, '_blank'); return; }
+    const query = filteredFoodList.map(i => i.name + (i.city ? ` ${i.city}` : '')).join(' | ');
+    window.open(`https://www.google.com/maps/search/${encodeURIComponent(query)}`, '_blank');
+  };
+
+  const modalDistricts = modal.data?.districts || [];
+  const modalCity = modal.data?.city || citiesPool[0] || '';
+
+  const toggleModalDistrict = (d) => {
+    setModal(prev => {
+      const cur = prev.data?.districts || [];
+      const next = cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d];
+      return { ...prev, data: { ...prev.data, districts: next } };
+    });
+  };
+
+  const openAddModal = () => {
+    setModal({
+      type: 'food',
+      data: {
+        category: '美食',
+        city: selectedCity !== '全部城市' ? selectedCity : '釜山',
+        districts: selectedDistricts.length > 0 ? [...selectedDistricts] : [],
+        foodType: selectedFoodType !== '全部食物' ? selectedFoodType : '',
+        date: '待安排', time: '', name: '', mapUrl: '', note: ''
+      }
+    });
+    setTempPhotos([]);
+    setShowCustomCity(false); setShowCustomDistrict(false); setShowCustomFoodType(false);
+    setCustomCity(''); setCustomDistrict(''); setCustomFoodType('');
+  };
+
+  const openEditModal = (item) => {
+    setModal({
+      type: 'food',
+      data: {
+        ...item,
+        districts: item.districts || (item.district ? [item.district] : []),
+      }
+    });
+    setTempPhotos(item.photos || []);
+    setShowCustomCity(false); setShowCustomDistrict(false); setShowCustomFoodType(false);
+    setCustomCity(''); setCustomDistrict(''); setCustomFoodType('');
+  };
+
+  const handleSave = () => {
+    if (!modal.data?.name?.trim()) return;
+    const finalData = {
+      ...modal.data,
+      photos: tempPhotos,
+      editedById: currentMember.id,
+      category: '美食',
+      createdAt: modal.data.createdAt || Date.now(),
+      districts: modal.data.districts || [],
+      district: (modal.data.districts || [])[0] || '', // 相容舊欄位
+    };
+    if (modal.data.id) {
+      setGlobalItinerary(p => p.map(it => it.id === modal.data.id ? finalData : it));
+    } else {
+      setGlobalItinerary(p => [...p, { ...finalData, id: Date.now() }]);
+    }
+    setModal({ type: null, data: null });
+  };
 
   return (
     <div className="relative animate-in fade-in pb-28">
-      <div className="sticky top-0 z-30 px-4 pt-3 pb-2 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm flex flex-col gap-3">
-        <div className="flex bg-orange-50/50 p-1.5 rounded-3xl border border-orange-100 relative">
-          {['待安排', '已安排'].map(t => (
-            <button key={t} onClick={() => setArrangedStatus(t)} className={`flex-1 px-4 py-2 text-sm font-bold rounded-2xl transition-all ${arrangedStatus === t ? 'bg-orange-500 text-white shadow-sm' : 'text-orange-400 hover:text-orange-500'}`}>{t}</button>
-          ))}
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex bg-white rounded-full p-1 border border-orange-100 shadow-sm">
-            <button onClick={() => setViewMode('list')} className={`p-1 rounded-full transition-colors ${viewMode === 'list' ? 'bg-orange-100 text-orange-500' : 'text-slate-400 hover:text-slate-600'}`}><List size={14} /></button>
-            <button onClick={() => setViewMode('map')} className={`p-1 rounded-full transition-colors ${viewMode === 'map' ? 'bg-orange-100 text-orange-500' : 'text-slate-400 hover:text-slate-600'}`}><Map size={14} /></button>
+
+      {/* ── 頂部篩選 Bar ── */}
+      <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
+        {/* 城市 + 食物類型 + 地圖切換 */}
+        <div className="px-4 pt-3 pb-2 flex items-center gap-2">
+          {/* 城市 */}
+          <select
+            value={selectedCity}
+            onChange={e => { setSelectedCity(e.target.value); setSelectedDistricts([]); setSelectedFoodType('全部食物'); }}
+            className={`flex-1 text-xs font-black rounded-xl px-3 py-2.5 appearance-none border outline-none text-center transition-all ${selectedCity !== '全部城市' ? 'bg-orange-500 text-white border-orange-500' : 'bg-slate-50 text-slate-600 border-slate-100'}`}
+          >
+            <option value="全部城市">全部城市</option>
+            {citiesPool.map(c => <option key={c} value={c} className="bg-white text-slate-800">{c}</option>)}
+          </select>
+          {/* 食物類型 */}
+          <select
+            value={selectedFoodType}
+            onChange={e => setSelectedFoodType(e.target.value)}
+            className={`flex-1 text-xs font-black rounded-xl px-3 py-2.5 appearance-none border outline-none text-center transition-all ${selectedFoodType !== '全部食物' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-slate-50 text-slate-600 border-slate-100'}`}
+          >
+            <option value="全部食物">全部食物</option>
+            {foodTypesPool.map(f => <option key={f} value={f} className="bg-white text-slate-800">{f}</option>)}
+          </select>
+          {/* 地圖/清單切換 */}
+          <div className="flex bg-white rounded-xl p-1 border border-slate-100 shadow-sm shrink-0">
+            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-orange-100 text-orange-500' : 'text-slate-400'}`}><List size={14} /></button>
+            <button onClick={() => setViewMode('map')} className={`p-1.5 rounded-lg transition-colors ${viewMode === 'map' ? 'bg-orange-100 text-orange-500' : 'text-slate-400'}`}><Map size={14} /></button>
           </div>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 px-1">
-          {(arrangedStatus === '待安排' ? ['釜山', '東京'] : visibleFoodDates).map(tab => (
-            <button key={tab} onClick={() => setSubTab(tab)} className={`flex-shrink-0 px-5 py-2 rounded-2xl text-xs font-bold transition-all border ${subTab === tab ? 'bg-orange-50 text-orange-600 border-orange-220 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>{tab}</button>
-          ))}
+
+        {/* 地區多選（只有選了城市才顯示）*/}
+        {selectedCity !== '全部城市' && topDistricts.length > 0 && (
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-4 pb-2.5">
+            {topDistricts.map(d => {
+              const active = selectedDistricts.includes(d);
+              return (
+                <button
+                  key={d}
+                  onClick={() => setSelectedDistricts(prev => active ? prev.filter(x => x !== d) : [...prev, d])}
+                  className={`shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${active ? 'bg-orange-500 text-white border-orange-500 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-orange-50'}`}
+                >
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 已選地區顯示（無城市篩選時不顯示地區列）*/}
+        {selectedDistricts.length > 0 && selectedCity === '全部城市' && (
+          <div className="px-4 pb-2 flex items-center gap-1 flex-wrap">
+            {selectedDistricts.map(d => (
+              <span key={d} className="flex items-center gap-1 px-2 py-1 bg-orange-100 text-orange-700 rounded-lg text-xs font-bold">
+                {d}
+                <button onClick={() => setSelectedDistricts(p => p.filter(x => x !== d))}><X size={10} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* 結果計數 + 管理自訂選項 */}
+        <div className="px-4 pb-2 flex items-center justify-between">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+            共 {filteredFoodList.length} 間餐廳
+          </span>
+          <div className="flex items-center gap-3">
+            {(selectedCity !== '全部城市' || selectedDistricts.length > 0 || selectedFoodType !== '全部食物') && (
+              <button onClick={() => { setSelectedCity('全部城市'); setSelectedDistricts([]); setSelectedFoodType('全部食物'); }} className="text-[10px] font-black text-orange-400 hover:text-orange-600 transition-colors">
+                清除篩選
+              </button>
+            )}
+            <button onClick={() => setShowManageOptions(true)} className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-slate-600 transition-colors">
+              <Settings size={11} />管理自訂
+            </button>
+          </div>
         </div>
       </div>
 
+      {/* ── 地圖模式 ── */}
       {viewMode === 'map' ? (
-        <div className="mt-4 px-4 h-[calc(100vh-270px)] flex flex-col animate-in fade-in">
-          <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
+        <div className="mt-4 px-4 h-[calc(100vh-300px)] flex flex-col animate-in fade-in">
+          {/* 一鍵開啟所有店 */}
+          {filteredFoodList.length > 0 && (
+            <button onClick={openAllOnGoogleMaps} className="mb-3 w-full py-2.5 bg-orange-500 text-white rounded-2xl text-xs font-black flex items-center justify-center gap-2 hover:bg-orange-600 active:scale-95 transition-all shadow-sm">
+              <MapPin size={14} strokeWidth={2.5} />
+              一鍵開啟全部 {filteredFoodList.length} 間店的地圖
+            </button>
+          )}
+          <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
             {activeMapItem ? (
               <MapEmbed query={activeMapItem.name + (activeMapItem.city ? ` ${activeMapItem.city}` : '')} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無美食可顯示</div>
             )}
           </div>
-          {foodList.length > 0 && (
-            <div className="h-32 mt-4 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
-              {foodList.map(item => (
-                <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-64 p-4 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${activeMapItem?.id === item.id ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    {item.time && arrangedStatus === '已安排' && <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${activeMapItem?.id === item.id ? 'bg-white/20' : 'bg-orange-50 text-orange-600'}`}>{item.time}</span>}
-                    <span className={`text-xs font-bold ${activeMapItem?.id === item.id ? 'text-orange-100' : 'text-slate-400'}`}>美食</span>
+          {filteredFoodList.length > 0 && (
+            <div className="h-32 mt-3 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
+              {filteredFoodList.map(item => {
+                const isActive = activeMapItem?.id === item.id;
+                const districts = (item.districts || []).join('·') || item.district || '';
+                return (
+                  <div key={item.id} onClick={() => setActiveMapItem(item)}
+                    className={`w-56 p-3.5 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${isActive ? 'bg-orange-500 text-white border-orange-500 scale-105' : 'bg-white text-slate-700 border-slate-200 hover:bg-orange-50'}`}>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${isActive ? 'bg-white/20 text-white' : 'bg-orange-50 text-orange-600'}`}>{item.city}</span>
+                      {districts && <span className={`text-[10px] font-bold truncate ${isActive ? 'text-orange-100' : 'text-slate-400'}`}>{districts}</span>}
+                    </div>
+                    <h4 className="font-bold text-sm truncate">{item.name}</h4>
+                    {item.foodType && <p className={`text-[10px] mt-0.5 ${isActive ? 'text-orange-100' : 'text-slate-400'}`}>#{item.foodType}</p>}
+                    {item.mapUrl && (
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className={`mt-1.5 text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-orange-100' : 'text-orange-400'}`}>
+                        <Navigation size={10} />直接導航
+                      </a>
+                    )}
                   </div>
-                  <h4 className="font-bold text-sm truncate mb-1">{item.name}</h4>
-                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-orange-100' : 'text-slate-400'}`}>{item.note || '無備註'}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       ) : (
-        <div className="relative mt-5 px-4 animate-in fade-in">
-          {arrangedStatus === '已安排' && foodList.length > 0 && (
-            <div className="absolute left-[2.35rem] top-0 bottom-0 w-0.5 bg-orange-100" style={{ top: 28, bottom: 28 }} />
-          )}
-          <div className="space-y-4">
-            {foodList.map((item, idx) => {
-              // 🌟 2. 這裡改為大括號，以便能安全宣告變數，並做好舊資料退回 lastEdited 的防呆
-              const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '同行隊友' };
-
-              return (
-                <div key={item.id} className={`relative flex gap-3 animate-in slide-in-from-bottom-2`}>
-                  {arrangedStatus === '已安排' && (
-                    <div className="flex flex-col items-center shrink-0" style={{ width: 32 }}>
-                      <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white text-xs font-black shadow-md border-2 border-white z-10">{idx + 1}</div>
-                    </div>
-                  )}
-                  <div className="flex-1 bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-shadow group">
-                    <div className="flex items-center gap-2 mb-3 flex-wrap">
-                      {item.time && arrangedStatus === '已安排' && <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-black text-xs border border-orange-100">{item.time}</span>}
-                      <span className="bg-orange-50 text-orange-600 px-2.5 py-1 rounded-lg font-bold text-xs border border-orange-100">美食</span>
-                      <div className="ml-auto flex gap-2 opacity-80 hover:opacity-100 transition-opacity">
-                        <button onClick={() => { setModal({ type: 'food', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-100"><Edit2 size={14} /></button>
-                        <button onClick={() => setConfirmDel({ fn: () => setGlobalItinerary(p => p.filter(it => it.id !== item.id)) })} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-100"><Trash2 size={14} /></button>
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-start gap-4">
-                      <div className="flex-1">
-                        <h4 className="text-base font-bold text-slate-800 mb-2">{item.name}</h4>
-                        {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm text-slate-600 border-l-4 border-orange-300 italic leading-relaxed mb-3 whitespace-pre-wrap">{item.note}</p>}
-                        {item.photos?.length > 0 && (
-                          <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
-                            {item.photos.map((p, i) => (
-                              <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="pic" />
-                            ))}
-                          </div>
-                        )}
-                        {/* 🌟 3. 這裡修正成擁有精緻小頭貼＋動態最新改名名字的 UI */}
-                        <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                          <Avatar member={editor} className="w-4 h-4 rounded-md" />
-                          <span>{editor.name} 編輯</span>
-                        </div>
-                      </div>
-                      {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex flex-col items-center justify-center hover:bg-orange-100 active:scale-90 border border-orange-100 shrink-0 transition-colors">
-                        <Navigation size={20} />
-                        <span className="text-[10px] font-bold mt-0.5">MAP</span>
-                      </a>}
-                    </div>
+        /* ── 清單模式 ── */
+        <div className="mt-4 px-4 space-y-4 animate-in fade-in">
+          {filteredFoodList.map((item) => {
+            const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '同行隊友', avatarColor: '#94a3b8' };
+            const districts = (item.districts || (item.district ? [item.district] : []));
+            return (
+              <div key={item.id} className="bg-white border border-slate-100 rounded-[2rem] p-5 shadow-sm hover:shadow-md transition-all">
+                {/* 右上按鈕 */}
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    <span className="px-2 py-0.5 rounded-lg bg-orange-50 border border-orange-100 text-orange-600 text-[10px] font-black">📍 {item.city}</span>
+                    {districts.map(d => (
+                      <span key={d} className="px-2 py-0.5 rounded-lg bg-orange-50 text-orange-500 text-[10px] font-bold">{d}</span>
+                    ))}
+                    {item.foodType && <span className="px-2 py-0.5 rounded-lg bg-amber-50 text-amber-700 text-[10px] font-bold">#{item.foodType}</span>}
+                    <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-600 text-[10px] font-bold">📅 {item.date === '待安排' ? '時間待定' : `${item.date} ${item.time || ''}`}</span>
+                  </div>
+                  <div className="flex gap-1.5 shrink-0">
+                    <button onClick={() => openEditModal(item)} className="p-2 bg-slate-50 hover:bg-orange-50 text-slate-400 hover:text-orange-500 rounded-xl transition-colors shadow-sm"><Edit2 size={13} /></button>
+                    <button onClick={() => setConfirmDel({ title: '刪除美食', message: `確定刪除「${item.name}」？`, fn: () => setGlobalItinerary(p => p.filter(x => x.id !== item.id)) })} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors shadow-sm"><Trash2 size={13} /></button>
                   </div>
                 </div>
-              );
-            })}
-            {foodList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">尚無美食清單</div>}
-          </div>
+
+                <h3 className="text-base font-black text-slate-800 leading-snug mb-2">{item.name}</h3>
+                {item.note && <p className="text-xs text-slate-500 whitespace-pre-wrap leading-relaxed bg-slate-50 p-3 rounded-2xl mb-3">{item.note}</p>}
+
+                {item.photos?.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto no-scrollbar mb-3">
+                    {item.photos.map((p, i) => (
+                      <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-20 h-20 object-cover rounded-2xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-90 transition-opacity" alt="food" />
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between border-t border-slate-50 pt-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    <Avatar member={editor} className="w-4 h-4 rounded-md" />
+                    <span>{editor.name} 編輯</span>
+                  </div>
+                  {item.mapUrl && (
+                    <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
+                      <Navigation size={13} strokeWidth={2.5} />開啟導航
+                    </a>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {filteredFoodList.length === 0 && (
+            <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">這個篩選條件下沒有美食收藏</div>
+          )}
         </div>
       )}
 
-      <button onClick={() => { setModal({ type: 'food', data: { category: '美食', date: arrangedStatus === '已安排' ? subTab : '待安排', city: arrangedStatus === '待安排' ? subTab : '釜山' } }); setTempPhotos([]); }} className="fixed bottom-[110px] right-6 w-16 h-16 bg-orange-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-orange-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
+      {/* ── 新增按鈕 ── */}
+      <button onClick={openAddModal} className="fixed bottom-[110px] right-6 w-16 h-16 bg-orange-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-orange-600 transition-colors">
+        <Plus size={30} strokeWidth={3} />
+      </button>
 
-      <Modal isOpen={!!modal.type} onClose={() => setModal({ type: null, data: null })} title="編輯美食">
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label="日期" type="select" options={tripDates} value={modal.data?.date} onChange={v => setModal({ ...modal, data: { ...modal.data, date: v } })} />
-          {modal.data?.date !== '待安排' ? (
-            <FormField label="時間（選填）" type="time" value={modal.data?.time} onChange={v => setModal({ ...modal, data: { ...modal.data, time: v } })} />
+      {/* ── 新增/編輯彈出視窗 ── */}
+      <Modal isOpen={modal.type === 'food'} onClose={() => setModal({ type: null, data: null })} title={modal.data?.id ? '編輯美食' : '新增美食'}>
+
+        {/* 城市 */}
+        <div className="mb-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🏙️ 城市</label>
+          {!showCustomCity ? (
+            <select value={modalCity} onChange={e => {
+              if (e.target.value === '__NEW__') { setShowCustomCity(true); return; }
+              setModal(prev => ({ ...prev, data: { ...prev.data, city: e.target.value, districts: [] } }));
+            }} className="w-full bg-white border border-slate-200 rounded-2xl p-4 font-bold text-slate-700 outline-none text-sm shadow-sm">
+              {citiesPool.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="__NEW__">➕ 新增自訂城市...</option>
+            </select>
           ) : (
-            <FormField label="城市" type="select" options={['釜山', '東京']} value={modal.data?.city} onChange={v => setModal({ ...modal, data: { ...modal.data, city: v } })} />
+            <div className="flex gap-2">
+              <input type="text" placeholder="輸入城市名稱" value={customCity} onChange={e => setCustomCity(e.target.value)}
+                className="flex-1 bg-white border border-slate-200 rounded-2xl p-4 font-semibold text-sm text-slate-700 outline-none" />
+              <button type="button" onClick={() => {
+                if (!customCity.trim()) return;
+                setModal(prev => ({ ...prev, data: { ...prev.data, city: customCity.trim(), districts: [] } }));
+                setShowCustomCity(false); setCustomCity('');
+              }} className="px-4 bg-orange-500 text-white font-bold rounded-2xl text-xs">套用</button>
+              <button type="button" onClick={() => setShowCustomCity(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
+            </div>
           )}
         </div>
-        <FormField label="美食名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} />
-        <FormField label="Map 連結（選填）" value={modal.data?.mapUrl} onChange={v => setModal({ ...modal, data: { ...modal.data, mapUrl: v } })} />
-        <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} />
+
+        {/* 地區（多選）*/}
+        <div className="mb-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🗺️ 地區（可多選）</label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {getDistrictsForCity(modalCity).map(d => {
+              const active = modalDistricts.includes(d);
+              return (
+                <button key={d} type="button" onClick={() => toggleModalDistrict(d)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${active ? 'bg-orange-500 text-white border-orange-500 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-orange-50'}`}>
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+          {/* 自訂地區 */}
+          {!showCustomDistrict ? (
+            <button type="button" onClick={() => setShowCustomDistrict(true)} className="text-xs font-bold text-orange-400 hover:text-orange-600 transition-colors">
+              ➕ 新增自訂地區
+            </button>
+          ) : (
+            <div className="flex gap-2 mt-1">
+              <input type="text" placeholder="例如：梨泰院" value={customDistrict} onChange={e => setCustomDistrict(e.target.value)}
+                className="flex-1 bg-white border border-slate-200 rounded-2xl p-3 font-semibold text-sm text-slate-700 outline-none" />
+              <button type="button" onClick={() => {
+                if (!customDistrict.trim()) return;
+                const d = customDistrict.trim();
+                setModal(prev => {
+                  const cur = prev.data?.districts || [];
+                  return { ...prev, data: { ...prev.data, districts: cur.includes(d) ? cur : [...cur, d] } };
+                });
+                setShowCustomDistrict(false); setCustomDistrict('');
+              }} className="px-4 bg-orange-500 text-white font-bold rounded-2xl text-xs">套用</button>
+              <button type="button" onClick={() => setShowCustomDistrict(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
+            </div>
+          )}
+          {modalDistricts.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {modalDistricts.map(d => (
+                <span key={d} className="flex items-center gap-1 px-2 py-1 bg-orange-100 text-orange-700 rounded-lg text-xs font-bold">
+                  {d}<button type="button" onClick={() => toggleModalDistrict(d)}><X size={10} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 食物類型 */}
+        <div className="mb-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🍖 食物類型</label>
+          {!showCustomFoodType ? (
+            <select value={modal.data?.foodType || ''} onChange={e => {
+              if (e.target.value === '__NEW__') { setShowCustomFoodType(true); return; }
+              setModal(prev => ({ ...prev, data: { ...prev.data, foodType: e.target.value } }));
+            }} className="w-full bg-white border border-slate-200 rounded-2xl p-4 font-bold text-slate-700 outline-none text-sm shadow-sm">
+              <option value="">無特定分類</option>
+              {foodTypesPool.map(f => <option key={f} value={f}>{f}</option>)}
+              <option value="__NEW__">➕ 新增自訂類別...</option>
+            </select>
+          ) : (
+            <div className="flex gap-2">
+              <input type="text" placeholder="例如：台式料理" value={customFoodType} onChange={e => setCustomFoodType(e.target.value)}
+                className="flex-1 bg-white border border-slate-200 rounded-2xl p-4 font-semibold text-sm text-slate-700 outline-none" />
+              <button type="button" onClick={() => {
+                if (!customFoodType.trim()) return;
+                setModal(prev => ({ ...prev, data: { ...prev.data, foodType: customFoodType.trim() } }));
+                setShowCustomFoodType(false); setCustomFoodType('');
+              }} className="px-4 bg-orange-500 text-white font-bold rounded-2xl text-xs">套用</button>
+              <button type="button" onClick={() => setShowCustomFoodType(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
+            </div>
+          )}
+        </div>
+
+        <FormField label="🏪 店家名稱" value={modal.data?.name} placeholder="例如：一蘭拉麵 涉谷店" onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, name: v } }))} />
+        <div className="grid grid-cols-2 gap-2">
+          <FormField label="📅 日期" type="select" options={tripDates} value={modal.data?.date} onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, date: v } }))} />
+          <FormField label="⏰ 時間（選填）" type="time" value={modal.data?.time} onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, time: v } }))} />
+        </div>
+        <FormField label="🌐 Google Map 連結（選填）" value={modal.data?.mapUrl} placeholder="貼上地圖分享連結" onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, mapUrl: v } }))} />
+        <FormField label="💡 必點推薦與備註" type="textarea" value={modal.data?.note} placeholder="例如：必吃厚切五花肉、需提早排隊..." onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, note: v } }))} />
+
+        {/* 相片 */}
         <div className="mb-4">
-          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">相片（最多 5 張）</label>
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">📷 相片（最多 5 張）</label>
           <div className="flex flex-wrap gap-2">
             {tempPhotos.map((url, idx) => (
               <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-100 shadow-sm">
                 <img src={url} className="w-full h-full object-cover" alt="tmp" />
-                <button onClick={() => setTempPhotos(p => p.filter((_, i) => i !== idx))} className="absolute top-1 right-1 p-1 bg-red-500/90 text-white rounded-lg backdrop-blur-sm"><X size={12} /></button>
+                <button type="button" onClick={() => setTempPhotos(p => p.filter((_, i) => i !== idx))} className="absolute top-1 right-1 p-1 bg-red-500/90 text-white rounded-lg"><X size={12} /></button>
               </div>
             ))}
-            {tempPhotos.length < 5 && <button onClick={() => document.getElementById('food-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
+            {tempPhotos.length < 5 && (
+              <button type="button" onClick={() => document.getElementById('food-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 shadow-sm"><Camera size={24} /></button>
+            )}
           </div>
           <input type="file" id="food-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => p.length < 5 ? [...p, compressed] : p); }; r.readAsDataURL(file); });
+            Array.from(e.target.files).forEach(file => {
+              const r = new FileReader();
+              r.onloadend = async () => {
+                const compressed = await compressImageBase64(r.result);
+                setTempPhotos(p => p.length < 5 ? [...p, compressed] : p);
+              };
+              r.readAsDataURL(file);
+            });
           }} />
         </div>
-        <button onClick={() => {
-          if (!modal.data.name) return;
-          // 🌟 4. 這裡把原本的 lastEdited: currentMember.name 修正成以 ID 綁定的 editedById 了！
-          const finalData = { ...modal.data, photos: tempPhotos, editedById: currentMember.id, category: '美食', createdAt: modal.data.createdAt || Date.now() };
-          if (modal.data.id) setGlobalItinerary(p => p.map(it => it.id === modal.data.id ? finalData : it));
-          else setGlobalItinerary(p => [...p, { ...finalData, id: Date.now() }]);
-          setModal({ type: null });
-        }} className="w-full bg-orange-500 text-white font-black py-4 rounded-2xl shadow-md mt-1 active:scale-95 text-base hover:bg-orange-600 transition-colors">確認儲存</button>
+
+        <button onClick={handleSave} className="w-full bg-orange-500 text-white font-black py-4 rounded-2xl shadow-md mt-1 active:scale-95 text-base hover:bg-orange-600 transition-colors">
+          確認儲存美食
+        </button>
       </Modal>
-      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} />
+
+      {/* ── 管理選項 Modal（全部選項都能增刪改）── */}
+      <Modal isOpen={showManageOptions} onClose={() => { setShowManageOptions(false); setEditingOption(null); }} title="管理選項">
+        {/* 城市 */}
+        <div className="mb-5">
+          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">🏙️ 城市</p>
+          {citiesPool.map(val => (
+            <div key={val} className="flex items-center gap-2 mb-2">
+              {editingOption?.type === 'city' && editingOption?.oldVal === val ? (
+                <>
+                  <input autoFocus type="text" value={editingOption.newVal} onChange={e => setEditingOption(p => ({ ...p, newVal: e.target.value }))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-orange-300" />
+                  <button onClick={() => renameCity(val, editingOption.newVal)} className="px-3 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold">儲存</button>
+                  <button onClick={() => setEditingOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm font-bold text-slate-700 px-1">{val}</span>
+                  <button onClick={() => setEditingOption({ type: 'city', oldVal: val, newVal: val })} className="p-2 bg-slate-50 hover:bg-orange-50 text-slate-400 hover:text-orange-500 rounded-xl transition-colors"><Edit2 size={13} /></button>
+                  <button onClick={() => setConfirmDel({ title: `刪除城市「${val}」`, message: `刪除後「${val}」下的店家城市欄位會被清空，店家本身不刪除。`, fn: () => deleteCity(val) })} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"><Trash2 size={13} /></button>
+                </>
+              )}
+            </div>
+          ))}
+          {showCustomCity ? (
+            <div className="flex gap-2 mt-1">
+              <input autoFocus type="text" placeholder="新城市名稱" value={customCity} onChange={e => setCustomCity(e.target.value)} onKeyDown={e => e.key === 'Enter' && (addCity(customCity), setCustomCity(''), setShowCustomCity(false))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-orange-300" />
+              <button onClick={() => { addCity(customCity); setCustomCity(''); setShowCustomCity(false); }} className="px-3 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold">新增</button>
+              <button onClick={() => setShowCustomCity(false)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowCustomCity(true)} className="text-xs font-black text-orange-400 hover:text-orange-600 flex items-center gap-1 mt-1"><Plus size={12} />新增城市</button>
+          )}
+        </div>
+
+        {/* 各城市地區 */}
+        {citiesPool.map(city => (
+          <div key={city} className="mb-5">
+            <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">🗺️ {city} 地區</p>
+            {(districtsMap[city] || []).map(val => (
+              <div key={val} className="flex items-center gap-2 mb-2">
+                {editingOption?.type === 'district' && editingOption?.city === city && editingOption?.oldVal === val ? (
+                  <>
+                    <input autoFocus type="text" value={editingOption.newVal} onChange={e => setEditingOption(p => ({ ...p, newVal: e.target.value }))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-orange-300" />
+                    <button onClick={() => renameDistrict(city, val, editingOption.newVal)} className="px-3 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold">儲存</button>
+                    <button onClick={() => setEditingOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 text-sm font-bold text-slate-700 px-1">{val}</span>
+                    <button onClick={() => setEditingOption({ type: 'district', city, oldVal: val, newVal: val })} className="p-2 bg-slate-50 hover:bg-orange-50 text-slate-400 hover:text-orange-500 rounded-xl transition-colors"><Edit2 size={13} /></button>
+                    <button onClick={() => setConfirmDel({ title: `刪除地區「${val}」`, message: '該地區標籤會從所有店家中移除，店家本身不刪除。', fn: () => deleteDistrict(city, val) })} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"><Trash2 size={13} /></button>
+                  </>
+                )}
+              </div>
+            ))}
+            {editingOption?.type === 'newDistrict' && editingOption?.city === city ? (
+              <div className="flex gap-2 mt-1">
+                <input autoFocus type="text" placeholder="新地區名稱" value={editingOption.newVal} onChange={e => setEditingOption(p => ({ ...p, newVal: e.target.value }))} onKeyDown={e => e.key === 'Enter' && (addDistrict(city, editingOption.newVal), setEditingOption(null))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-orange-300" />
+                <button onClick={() => { addDistrict(city, editingOption.newVal); setEditingOption(null); }} className="px-3 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold">新增</button>
+                <button onClick={() => setEditingOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+              </div>
+            ) : (
+              <button onClick={() => setEditingOption({ type: 'newDistrict', city, newVal: '' })} className="text-xs font-black text-orange-400 hover:text-orange-600 flex items-center gap-1 mt-1"><Plus size={12} />新增地區</button>
+            )}
+          </div>
+        ))}
+
+        {/* 食物類型 */}
+        <div className="mb-5">
+          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">🍖 食物類型</p>
+          {foodTypesPool.map(val => (
+            <div key={val} className="flex items-center gap-2 mb-2">
+              {editingOption?.type === 'foodType' && editingOption?.oldVal === val ? (
+                <>
+                  <input autoFocus type="text" value={editingOption.newVal} onChange={e => setEditingOption(p => ({ ...p, newVal: e.target.value }))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-orange-300" />
+                  <button onClick={() => renameFoodType(val, editingOption.newVal)} className="px-3 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold">儲存</button>
+                  <button onClick={() => setEditingOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm font-bold text-slate-700 px-1">{val}</span>
+                  <button onClick={() => setEditingOption({ type: 'foodType', oldVal: val, newVal: val })} className="p-2 bg-slate-50 hover:bg-orange-50 text-slate-400 hover:text-orange-500 rounded-xl transition-colors"><Edit2 size={13} /></button>
+                  <button onClick={() => setConfirmDel({ title: `刪除「${val}」`, message: '該標籤會從所有店家中移除，店家本身不刪除。', fn: () => deleteFoodType(val) })} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"><Trash2 size={13} /></button>
+                </>
+              )}
+            </div>
+          ))}
+          {showCustomFoodType ? (
+            <div className="flex gap-2 mt-1">
+              <input autoFocus type="text" placeholder="新食物類型" value={customFoodType} onChange={e => setCustomFoodType(e.target.value)} onKeyDown={e => e.key === 'Enter' && (addFoodType(customFoodType), setCustomFoodType(''), setShowCustomFoodType(false))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-orange-300" />
+              <button onClick={() => { addFoodType(customFoodType); setCustomFoodType(''); setShowCustomFoodType(false); }} className="px-3 py-2 bg-orange-500 text-white rounded-xl text-xs font-bold">新增</button>
+              <button onClick={() => setShowCustomFoodType(false)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowCustomFoodType(true)} className="text-xs font-black text-orange-400 hover:text-orange-600 flex items-center gap-1 mt-1"><Plus size={12} />新增食物類型</button>
+          )}
+        </div>
+      </Modal>
+
+      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} title={confirmDel?.title} message={confirmDel?.message} />
       <PhotoViewerModal isOpen={!!viewerPhotos} onClose={() => setViewerPhotos(null)} photos={viewerPhotos} initialIndex={viewerIndex} />
     </div>
   );
@@ -1017,53 +1552,119 @@ const CurrencyBadge = ({ amount, currency, type }) => {
     </span>
   );
 };
+
 // ─── ShoppingPage ─────────────────────────────────────────────────────────────
+// 購物預設選項
+const SHOP_CITIES_DEFAULT = ['釜山', '東京'];
+const SHOP_MALLS = {
+  '釜山': ['新世界百貨', '樂天免稅店', '樂天百貨', 'Olive Young', 'Centum City'],
+  '東京': ['Don Quijote', '大創 DAISO', '松本清', '伊勢丹', '高島屋', 'BIC Camera', 'Yodobashi'],
+};
+const SHOP_LOCATIONS = {
+  '釜山': ['海雲台店', '西面店', '南浦洞店', 'Centum City', 'BIFF廣場旁'],
+  '東京': ['涉谷店', '新宿店', '銀座店', '秋葉原店', '池袋店', '原宿店'],
+};
+
 const ShoppingPage = ({ onDownload }) => {
   const { allMembers, currentMember, shoppingList, setShoppingList, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, walletDates, setWalletDates } = useMember();
-  const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
-  const [cityTab, setCityTab] = useState('釜山');
-  
+
+  // ── 篩選狀態 ──
+  const [selectedMemberId, setSelectedMemberId] = useState('all');
+  const [selectedCity, setSelectedCity] = useState('全部城市');
+  const [selectedMall, setSelectedMall] = useState('全部商場');
+  const [selectedLocation, setSelectedLocation] = useState('全部地區');
   const [viewMode, setViewMode] = useState('list');
   const [activeMapItem, setActiveMapItem] = useState(null);
-  
+
   const [modal, setModal] = useState({ type: null, data: null });
   const [tempPhotos, setTempPhotos] = useState([]);
   const [boughtModal, setBoughtModal] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
 
-  useEffect(() => {
-    if (currentMember?.id) {
-      setViewMemberId(currentMember.id);
-    }
-  }, [currentMember?.id]);
+  // ── 自訂欄位 ──
+  const [customCity, setCustomCity] = useState('');
+  const [customMall, setCustomMall] = useState('');
+  const [customLocation, setCustomLocation] = useState('');
+  const [showCustomCity, setShowCustomCity] = useState(false);
+  const [showCustomMall, setShowCustomMall] = useState(false);
+  const [showCustomLocation, setShowCustomLocation] = useState(false);
 
-  const sortedList = useMemo(() => {
-    const list = shoppingList.filter(s => s.memberId === viewMemberId && s.city === cityTab);
+  // ── 選項池（動態從清單擴充）──
+  const citiesPool = useMemo(() => {
+    const saved = shoppingList.map(s => s.city).filter(Boolean);
+    return Array.from(new Set([...SHOP_CITIES_DEFAULT, ...saved]));
+  }, [shoppingList]);
+
+  const getMallsForCity = useCallback((city) => {
+    const base = SHOP_MALLS[city] || [];
+    const saved = shoppingList.filter(s => s.city === city).map(s => s.mall).filter(Boolean);
+    return Array.from(new Set([...base, ...saved]));
+  }, [shoppingList]);
+
+  const getLocationsForCity = useCallback((city) => {
+    const base = SHOP_LOCATIONS[city] || [];
+    const saved = shoppingList.filter(s => s.city === city).map(s => s.location).filter(Boolean);
+    return Array.from(new Set([...base, ...saved]));
+  }, [shoppingList]);
+
+  const topMalls = useMemo(() => {
+    if (selectedCity === '全部城市') return [];
+    return getMallsForCity(selectedCity);
+  }, [selectedCity, getMallsForCity]);
+
+  const topLocations = useMemo(() => {
+    if (selectedCity === '全部城市') return [];
+    return getLocationsForCity(selectedCity);
+  }, [selectedCity, getLocationsForCity]);
+
+  // ── 篩選清單 ──
+  const filteredList = useMemo(() => {
+    const list = shoppingList.filter(s => {
+      if (selectedCity !== '全部城市' && s.city !== selectedCity) return false;
+      if (selectedMall !== '全部商場' && s.mall !== selectedMall) return false;
+      if (selectedLocation !== '全部地區' && s.location !== selectedLocation) return false;
+      if (selectedMemberId !== 'all' && s.memberId !== selectedMemberId) return false;
+      return true;
+    });
     const unbought = list.filter(i => !i.isBought).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     const bought = list.filter(i => i.isBought).sort((a, b) => (b.boughtAtMs || 0) - (a.boughtAtMs || 0));
     return [...unbought, ...bought];
-  }, [shoppingList, viewMemberId, cityTab]);
+  }, [shoppingList, selectedMemberId, selectedCity, selectedMall, selectedLocation]);
 
-  const isOwner = viewMemberId === currentMember?.id;
+  const isOwner = selectedMemberId === 'all' || selectedMemberId === currentMember?.id;
 
   useEffect(() => {
-    if (viewMode === 'map' && sortedList.length > 0) {
-      if (!activeMapItem || !sortedList.find(i => i.id === activeMapItem.id)) {
-        setActiveMapItem(sortedList[0]);
+    if (viewMode === 'map' && filteredList.length > 0) {
+      if (!activeMapItem || !filteredList.find(i => i.id === activeMapItem.id)) {
+        setActiveMapItem(filteredList[0]);
       }
     }
-  }, [viewMode, sortedList]);
+  }, [viewMode, filteredList]);
+
+  const openAllOnGoogleMaps = () => {
+    const withMap = filteredList.filter(i => i.mapUrl);
+    if (withMap.length === 1) { window.open(withMap[0].mapUrl, '_blank'); return; }
+    const query = filteredList.map(i => [(i.mall || i.shopName || i.name), i.city].filter(Boolean).join(' ')).join(' | ');
+    window.open(`https://www.google.com/maps/search/${encodeURIComponent(query)}`, '_blank');
+  };
 
   useEffect(() => {
     onDownload(() => () => {
-      let text = `購物清單 - ${cityTab}\n\n`;
-      sortedList.forEach(i => { text += `[${i.isBought ? '已買' : '未買'}] ${i.name}\n`; if (i.shopName) text += `店家: ${i.shopName}\n`; if (i.price && i.price !== '0') text += `價格: ${i.price} ${i.currency}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
-      downloadTextFile(text, `Shopping_${cityTab}`);
+      const memberName = selectedMemberId === 'all' ? '全員' : (allMembers.find(m => m.id === selectedMemberId)?.name || '');
+      let text = `購物清單 - ${selectedCity} (${memberName})\n\n`;
+      filteredList.forEach(i => {
+        text += `[${i.isBought ? '已買' : '未買'}] ${i.name}\n`;
+        if (i.mall) text += `商場: ${i.mall}\n`;
+        if (i.location) text += `地點: ${i.location}\n`;
+        if (i.price && i.price !== '0') text += `價格: ${i.price} ${i.currency}\n`;
+        if (i.note) text += `備註: ${i.note}\n`;
+        text += '--\n';
+      });
+      downloadTextFile(text, `Shopping_${selectedCity}`);
     });
-  }, [sortedList, cityTab, onDownload]);
+  }, [filteredList, selectedCity, selectedMemberId, allMembers, onDownload]);
 
   const handleDeleteShoppingItem = (item) => {
     setConfirmDel({
@@ -1082,27 +1683,14 @@ const ShoppingPage = ({ onDownload }) => {
     const dateStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}`;
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     let walletRecordId = null;
-
-    if (!walletDates.includes(dateStr)) {
-      setWalletDates(prev => [...prev, dateStr].sort());
-    }
-
+    if (!walletDates.includes(dateStr)) setWalletDates(prev => [...prev, dateStr].sort());
     if (target !== '略過不記帳' && price && price !== '0') {
       walletRecordId = Date.now();
-      const record = { 
-        id: walletRecordId, name: `購買: ${boughtModal.name}`, type: '支出', amount: price, currency, 
-        date: dateStr, note: boughtModal.note || '自購物清單連動', editedById: currentMember?.id || '', 
-        shoppingItemId: boughtModal.id, createdAt: Date.now() 
-      };
+      const record = { id: walletRecordId, name: `購買: ${boughtModal.name}`, type: '支出', amount: price, currency, date: dateStr, note: boughtModal.note || '自購物清單連動', editedById: currentMember?.id || '', shoppingItemId: boughtModal.id, createdAt: Date.now() };
       if (target === '共用錢包') setSharedWallet(p => [...p, record]);
       else if (target === '個人記帳') setPersonalWallet(p => [...p, record]);
     }
-    
-    setShoppingList(p => p.map(s => s.id === boughtModal.id ? {
-      ...s, isBought: true, boughtAt: `${dateStr} ${timeStr}`, boughtAtMs: now.getTime(),
-      completedById: currentMember?.id || '', price: target === '略過不記帳' ? null : price,
-      currency: target === '略過不記帳' ? null : currency, recordedIn: target === '略過不記帳' ? null : target, walletRecordId
-    } : s));
+    setShoppingList(p => p.map(s => s.id === boughtModal.id ? { ...s, isBought: true, boughtAt: `${dateStr} ${timeStr}`, boughtAtMs: now.getTime(), completedById: currentMember?.id || '', price: target === '略過不記帳' ? null : price, currency: target === '略過不記帳' ? null : currency, recordedIn: target === '略過不記帳' ? null : target, walletRecordId } : s));
     setBoughtModal(null);
   };
 
@@ -1120,188 +1708,308 @@ const ShoppingPage = ({ onDownload }) => {
     });
   };
 
+  const openAddModal = () => {
+    setModal({ type: 'add', data: { city: selectedCity !== '全部城市' ? selectedCity : (citiesPool[0] || '釜山'), mall: selectedMall !== '全部商場' ? selectedMall : '', location: selectedLocation !== '全部地區' ? selectedLocation : '' } });
+    setTempPhotos([]);
+    setShowCustomCity(false); setShowCustomMall(false); setShowCustomLocation(false);
+    setCustomCity(''); setCustomMall(''); setCustomLocation('');
+  };
+
+  const modalCity = modal.data?.city || citiesPool[0] || '釜山';
+  const modalMallPool = getMallsForCity(modalCity);
+  const modalLocationPool = getLocationsForCity(modalCity);
+
   return (
     <div className="relative animate-in fade-in pb-28">
-      <div className="sticky top-0 z-30 px-4 pt-3 pb-2 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm flex flex-col gap-1">
-        <div className="flex items-center justify-between pl-1 pr-1">
-          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar flex-1 py-2 px-1">
+
+      {/* ── 頂部篩選 Bar ── */}
+      <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
+
+        {/* 第一排：許願者頭像 + 地圖切換 */}
+        <div className="px-4 pt-3 pb-2 flex items-center gap-3">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar flex-1">
+            {/* 全部 */}
+            <button
+              onClick={() => setSelectedMemberId('all')}
+              className={`shrink-0 flex flex-col items-center gap-1 transition-all ${selectedMemberId === 'all' ? 'scale-105' : 'opacity-50 hover:opacity-80'}`}
+            >
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black border-2 shadow-sm transition-all ${selectedMemberId === 'all' ? 'bg-pink-500 text-white border-pink-500' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                全
+              </div>
+              <span className={`text-[9px] font-bold tracking-wider ${selectedMemberId === 'all' ? 'text-pink-600' : 'text-slate-400'}`}>全員</span>
+            </button>
+            {/* 各成員 */}
             {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
-              <button key={m.id} onClick={() => setViewMemberId(m.id)} className={`flex-shrink-0 flex flex-col items-center gap-1.5 transition-all ${viewMemberId === m.id ? 'scale-105' : 'opacity-50 grayscale hover:grayscale-0 hover:opacity-80'}`}>
-                <Avatar member={m} className={`w-12 h-12 shadow-sm ${viewMemberId === m.id ? 'ring-2 ring-offset-2 ring-pink-400' : ''}`} />
-                <span className={`text-[10px] font-bold uppercase tracking-wider ${viewMemberId === m.id ? 'text-pink-600' : 'text-slate-500'}`}>{m.name}</span>
+              <button key={m.id} onClick={() => setSelectedMemberId(m.id)} className={`shrink-0 flex flex-col items-center gap-1 transition-all ${selectedMemberId === m.id ? 'scale-105' : 'opacity-50 hover:opacity-80'}`}>
+                <Avatar member={m} className={`w-10 h-10 shadow-sm transition-all ${selectedMemberId === m.id ? 'ring-2 ring-offset-1 ring-pink-400' : ''}`} />
+                <span className={`text-[9px] font-bold tracking-wider max-w-[40px] truncate ${selectedMemberId === m.id ? 'text-pink-600' : 'text-slate-400'}`}>
+                  {m.id === currentMember?.id ? '我' : m.name}
+                </span>
               </button>
             ))}
           </div>
-          <div className="flex bg-white rounded-full p-1 border border-pink-100 shadow-sm shrink-0 ml-4">
-            <button onClick={() => setViewMode('list')} className={`p-1 rounded-full transition-colors ${viewMode === 'list' ? 'bg-pink-100 text-pink-500' : 'text-slate-400 hover:text-slate-600'}`}><List size={14} /></button>
-            <button onClick={() => setViewMode('map')} className={`p-1 rounded-full transition-colors ${viewMode === 'map' ? 'bg-pink-100 text-pink-500' : 'text-slate-400 hover:text-slate-600'}`}><Map size={14} /></button>
+          <div className="flex bg-white rounded-xl p-1 border border-slate-100 shadow-sm shrink-0">
+            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-pink-100 text-pink-500' : 'text-slate-400'}`}><List size={14} /></button>
+            <button onClick={() => setViewMode('map')} className={`p-1.5 rounded-lg transition-colors ${viewMode === 'map' ? 'bg-pink-100 text-pink-500' : 'text-slate-400'}`}><Map size={14} /></button>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-1 mt-1">
-          {['釜山', '東京'].map(tab => (
-            <button key={tab} onClick={() => setCityTab(tab)} className={`px-5 py-2 rounded-2xl text-sm font-bold transition-all border ${cityTab === tab ? 'bg-pink-50 text-pink-600 border-pink-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>{tab}</button>
-          ))}
+
+        {/* 第二排：城市 + 商場 + 地區三選 */}
+        <div className="px-4 pb-2 grid grid-cols-3 gap-2">
+          <select value={selectedCity} onChange={e => { setSelectedCity(e.target.value); setSelectedMall('全部商場'); setSelectedLocation('全部地區'); }}
+            className={`text-xs font-black rounded-xl px-2 py-2.5 appearance-none border outline-none text-center transition-all ${selectedCity !== '全部城市' ? 'bg-pink-500 text-white border-pink-500' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+            <option value="全部城市" className="bg-white text-slate-800">全部城市</option>
+            {citiesPool.map(c => <option key={c} value={c} className="bg-white text-slate-800">{c}</option>)}
+          </select>
+          <select value={selectedMall} onChange={e => { setSelectedMall(e.target.value); setSelectedLocation('全部地區'); }}
+            className={`text-xs font-black rounded-xl px-2 py-2.5 appearance-none border outline-none text-center transition-all ${selectedMall !== '全部商場' ? 'bg-pink-100 text-pink-700 border-pink-200' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+            <option value="全部商場" className="bg-white text-slate-800">全部商場</option>
+            {topMalls.map(m => <option key={m} value={m} className="bg-white text-slate-800">{m}</option>)}
+          </select>
+          <select value={selectedLocation} onChange={e => setSelectedLocation(e.target.value)}
+            className={`text-xs font-black rounded-xl px-2 py-2.5 appearance-none border outline-none text-center transition-all ${selectedLocation !== '全部地區' ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+            <option value="全部地區" className="bg-white text-slate-800">全部地區</option>
+            {topLocations.map(l => <option key={l} value={l} className="bg-white text-slate-800">{l}</option>)}
+          </select>
+        </div>
+
+        {/* 計數 + 清除 */}
+        <div className="px-4 pb-2 flex items-center justify-between">
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">共 {filteredList.length} 件・{filteredList.filter(i => i.isBought).length} 件已買</span>
+          {(selectedCity !== '全部城市' || selectedMall !== '全部商場' || selectedLocation !== '全部地區' || selectedMemberId !== 'all') && (
+            <button onClick={() => { setSelectedCity('全部城市'); setSelectedMall('全部商場'); setSelectedLocation('全部地區'); setSelectedMemberId('all'); }} className="text-[10px] font-black text-pink-400 hover:text-pink-600 transition-colors">清除篩選</button>
+          )}
         </div>
       </div>
 
+      {/* ── 地圖模式 ── */}
       {viewMode === 'map' ? (
         <div className="mt-4 px-4 h-[calc(100vh-310px)] flex flex-col animate-in fade-in">
-          {activeMapItem?.mapUrl && (
-            <a href={activeMapItem.mapUrl} target="_blank" rel="noreferrer" className="mb-3 w-full bg-gradient-to-r from-pink-500 to-rose-500 text-white font-black py-3 px-4 rounded-2xl shadow-md text-xs flex items-center justify-center gap-2 active:scale-95 transition-transform shrink-0">
-              <Navigation size={14} strokeWidth={3} />
-              <span>開啟手機地圖精準導航 (支援 NAVER Map / Google Map)</span>
-            </a>
+          {filteredList.length > 0 && (
+            <button onClick={openAllOnGoogleMaps} className="mb-3 w-full py-2.5 bg-pink-500 text-white rounded-2xl text-xs font-black flex items-center justify-center gap-2 hover:bg-pink-600 active:scale-95 transition-all shadow-sm shrink-0">
+              <MapPin size={14} strokeWidth={2.5} />
+              一鍵開啟全部 {filteredList.length} 個購物地點
+            </button>
           )}
-
-          <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
+          <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
             {activeMapItem ? (
-              <MapEmbed query={(activeMapItem.shopName || activeMapItem.name) + ` ${cityTab}`} />
+              <MapEmbed query={[(activeMapItem.mall || activeMapItem.shopName || activeMapItem.name), activeMapItem.city].filter(Boolean).join(' ')} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無購物項目可顯示</div>
             )}
           </div>
-          {sortedList.length > 0 && (
-            <div className="h-32 mt-4 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
-              {sortedList.map(item => (
-                <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-64 p-4 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${item.isBought ? 'opacity-70 bg-slate-50' : ''} ${activeMapItem?.id === item.id ? 'bg-pink-500 text-white border-pink-500 opacity-100' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    {item.isBought && <span className={`px-2 py-0.5 rounded-md font-black text-[10px] ${activeMapItem?.id === item.id ? 'bg-white/20' : 'bg-slate-200 text-slate-500'}`}>已購買</span>}
-                    <span className={`text-xs font-bold ${activeMapItem?.id === item.id ? 'text-pink-100' : 'text-slate-400'}`}>購物</span>
+          {filteredList.length > 0 && (
+            <div className="h-32 mt-3 overflow-x-auto no-scrollbar flex items-center gap-3 shrink-0 pb-2">
+              {filteredList.map(item => {
+                const isActive = activeMapItem?.id === item.id;
+                const owner = allMembers.find(m => m.id === item.memberId) || { name: '成員', avatarColor: '#94a3b8' };
+                return (
+                  <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-52 p-3.5 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${item.isBought ? 'opacity-60' : ''} ${isActive ? 'bg-pink-500 text-white border-pink-500 scale-105 opacity-100' : 'bg-white text-slate-700 border-slate-200 hover:bg-pink-50'}`}>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <Avatar member={owner} className="w-4 h-4 rounded-md shrink-0" />
+                      <span className={`text-[10px] font-bold truncate flex-1 ${isActive ? 'text-pink-100' : 'text-slate-400'}`}>{owner.name}</span>
+                      {item.isBought && <span className={`text-[10px] font-black shrink-0 ${isActive ? 'text-pink-100' : 'text-pink-400'}`}>✓</span>}
+                    </div>
+                    <h4 className={`font-bold text-sm truncate ${item.isBought && !isActive ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
+                    {(item.mall || item.shopName) && <p className={`text-[10px] mt-0.5 truncate ${isActive ? 'text-pink-100' : 'text-slate-400'}`}>🏪 {item.mall || item.shopName}</p>}
+                    {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className={`mt-1 text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-pink-100' : 'text-pink-400'}`}><Navigation size={9} />導航</a>}
                   </div>
-                  <h4 className={`font-bold text-sm truncate mb-1 ${item.isBought && activeMapItem?.id !== item.id ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
-                  <p className={`text-xs truncate ${activeMapItem?.id === item.id ? 'text-pink-100' : 'text-slate-400'}`}>{item.shopName ? `@ ${item.shopName}` : (item.note || '無備註')}</p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
       ) : (
-        <div className="space-y-4 mt-5 px-4 animate-in fade-in">
-          {sortedList.map(item => {
-            const creator = allMembers.find(m => m.id === item.createdById) || { name: item.createdBy || '成員' };
-            const completer = allMembers.find(m => m.id === item.completedById) || { name: item.completedBy || '成員' };
+        /* ── 清單模式 ── */
+        <div className="space-y-4 mt-4 px-4 animate-in fade-in">
+          {filteredList.map(item => {
+            const owner = allMembers.find(m => m.id === item.memberId) || { name: item.createdBy || '成員', avatarColor: '#94a3b8' };
+            const completer = allMembers.find(m => m.id === item.completedById) || { name: item.completedBy || '成員', avatarColor: '#94a3b8' };
+            const isMine = item.memberId === currentMember?.id;
 
             return (
-              <div key={item.id} className={`bg-white border border-slate-100 p-5 rounded-[2rem] shadow-sm hover:shadow-md transition-all group animate-in slide-in-from-bottom-2 ${item.isBought ? 'opacity-70 bg-slate-50/50' : ''}`}>
-                <div className="flex justify-between items-start gap-4 w-full">
+              <div key={item.id} className={`bg-white border border-slate-100 rounded-[2rem] p-5 shadow-sm transition-all ${item.isBought ? 'opacity-60 bg-slate-50/50' : 'hover:shadow-md'}`}>
+
+                {/* 頂部標籤列 */}
+                <div className="flex items-start justify-between gap-3 mb-3">
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {item.city && <span className="px-2 py-0.5 rounded-lg bg-pink-50 border border-pink-100 text-pink-600 text-[10px] font-black">📍 {item.city}</span>}
+                    {(item.mall || item.shopName) && <span className="px-2 py-0.5 rounded-lg bg-pink-50 text-pink-500 text-[10px] font-bold">🏪 {item.mall || item.shopName}</span>}
+                    {item.location && <span className="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-600 text-[10px] font-bold">🗺 {item.location}</span>}
+                  </div>
+                  {/* 只有自己的可以編輯刪除 */}
+                  {isMine && (
+                    <div className="flex gap-1.5 shrink-0">
+                      <button onClick={() => { setModal({ type: 'edit', data: item }); setTempPhotos(item.photos || []); setShowCustomCity(false); setShowCustomMall(false); setShowCustomLocation(false); }} className="p-2 bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-pink-500 rounded-xl transition-colors shadow-sm"><Edit2 size={13} /></button>
+                      <button onClick={() => handleDeleteShoppingItem(item)} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors shadow-sm"><Trash2 size={13} /></button>
+                    </div>
+                  )}
+                </div>
+
+                {/* 商品名 + 打勾 */}
+                <div className="flex items-center gap-3 mb-3">
+                  {/* 任何人都可以打勾，但只有自己能取消 */}
+                  <button
+                    onClick={() => {
+                      if (item.isBought && isMine) { handleUncheckBought(item); return; }
+                      if (!item.isBought) { setBoughtModal(item); return; }
+                    }}
+                    className={`w-9 h-9 rounded-2xl flex items-center justify-center border-2 transition-all shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white shadow-md' : 'bg-white border-pink-200 hover:border-pink-400 hover:bg-pink-50'}`}
+                  >
+                    <Check size={18} strokeWidth={3} className={item.isBought ? 'opacity-100' : 'opacity-30'} />
+                  </button>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-3">
-                      {isOwner ? (
-                        <button onClick={() => item.isBought ? handleUncheckBought(item) : setBoughtModal(item)} className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 transition-colors shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-pink-200 text-pink-200 hover:bg-pink-50'}`}>
-                          {item.isBought ? <Check size={18} strokeWidth={4} /> : <Check size={18} strokeWidth={4} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
-                        </button>
-                      ) : (
-                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center border-2 shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white' : 'bg-white border-slate-200'}`}>
-                          {item.isBought && <Check size={18} strokeWidth={4} />}
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <h4 className={`text-base font-bold text-slate-800 truncate ${item.isBought ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
-                        {item.shopName && <p className="text-xs font-black text-pink-400 mt-0.5 truncate">📍 預計購買：{item.shopName}</p>}
-                      </div>
+                    <h3 className={`text-base font-black text-slate-800 leading-snug ${item.isBought ? 'line-through text-slate-400' : ''}`}>{item.name}</h3>
+                  </div>
+                </div>
+
+                {/* 備註 */}
+                {item.note && <p className="text-xs text-slate-500 whitespace-pre-wrap leading-relaxed bg-slate-50 p-3 rounded-2xl border-l-4 border-pink-200 mb-3">{item.note}</p>}
+
+                {/* 相片 */}
+                {item.photos?.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto no-scrollbar mb-3">
+                    {item.photos.map((p, i) => (
+                      <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-20 h-20 object-cover rounded-2xl border border-slate-100 shadow-sm shrink-0 cursor-pointer hover:opacity-90 transition-opacity" alt="photo" />
+                    ))}
+                  </div>
+                )}
+
+                {/* 已購買資訊 */}
+                {item.isBought && (
+                  <div className="mt-2 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-pink-600 bg-pink-50 px-3 py-1.5 rounded-xl w-fit border border-pink-100">
+                      <Avatar member={completer} className="w-4 h-4 rounded-md" />
+                      <span>{completer.name} 於 {item.boughtAt} 購入</span>
                     </div>
-
-                    <div className="text-[10px] font-bold text-slate-400 mb-2 flex items-center gap-1.5">
-                      <Avatar member={creator} className="w-4 h-4 rounded-md" />
-                      <span>{creator.name} 許願</span>
-                    </div>
-
-                    {item.isBought && (
-                      <div className="mb-2 space-y-2 mt-3">
-                        <div className="text-xs font-bold text-pink-600 flex items-center gap-1.5 bg-pink-50 px-3 py-1.5 rounded-lg w-fit border border-pink-100">
-                          <Avatar member={completer} className="w-4 h-4 rounded-md" />
-                          <span>由 {completer.name} 於 {item.boughtAt} 採購</span>
-                        </div>
-                        {item.recordedIn && item.price && item.price !== '0' && (
-                          <div className="flex items-center gap-2 flex-wrap pt-1">
-                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">計入 {item.recordedIn}：</span>
-                            <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {item.note && <p className="bg-slate-50 p-3 rounded-2xl text-sm font-medium text-slate-600 border-l-4 border-pink-300 mt-3 italic leading-relaxed whitespace-pre-wrap">{item.note}</p>}
-                    {item.photos?.length > 0 && (
-                      <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar">
-                        {item.photos.map((p, i) => (
-                          <img key={i} src={p} onClick={() => { setViewerPhotos(item.photos); setViewerIndex(i); }} className="w-16 h-16 object-cover rounded-xl border border-slate-100 shadow-sm flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity" alt="photo" />
-                        ))}
+                    {item.recordedIn && item.price && item.price !== '0' && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">計入 {item.recordedIn}：</span>
+                        <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
                       </div>
                     )}
                   </div>
+                )}
 
-                  <div className="flex flex-col items-end gap-3 shrink-0">
-                    {isOwner && (
-                      <div className="flex gap-1.5 opacity-80 hover:opacity-100 transition-opacity">
-                        <button onClick={() => { setModal({ type: 'edit', data: item }); setTempPhotos(item.photos || []); }} className="p-2 text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors border border-slate-200 shadow-sm active:scale-90"><Edit2 size={13} /></button>
-                        <button onClick={() => handleDeleteShoppingItem(item)} className="p-2 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-200 shadow-sm active:scale-90"><Trash2 size={13} /></button>
-                      </div>
-                    )}
-                    {item.mapUrl && (
-                      <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-white text-pink-500 rounded-2xl flex flex-col items-center justify-center hover:bg-pink-50 active:scale-90 flex-shrink-0 border border-pink-200 shadow-md transition-all">
-                        <Navigation size={18} strokeWidth={2.5} />
-                        <span className="text-[9px] font-black mt-0.5 tracking-wider">MAP</span>
-                      </a>
-                    )}
+                {/* 底部：許願者 + 導航 */}
+                <div className="flex items-center justify-between border-t border-slate-50 pt-3 mt-3">
+                  <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    <Avatar member={owner} className="w-4 h-4 rounded-md" />
+                    <span>{owner.name} 許願</span>
                   </div>
+                  {item.mapUrl && (
+                    <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
+                      <Navigation size={13} strokeWidth={2.5} />導航
+                    </a>
+                  )}
                 </div>
               </div>
             );
           })}
-          {sortedList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">Empty List</div>}
+          {filteredList.length === 0 && <div className="py-24 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">目前沒有購物清單</div>}
         </div>
       )}
 
-      {isOwner && (
-        <button onClick={() => { setModal({ type: 'add', data: {} }); setTempPhotos([]); }} className="fixed bottom-[110px] right-6 w-16 h-16 bg-pink-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-pink-600 transition-colors">
-          <Plus size={30} strokeWidth={3} />
-        </button>
-      )}
+      {/* 新增按鈕（任何人都可以新增自己的） */}
+      <button onClick={openAddModal} className="fixed bottom-[110px] right-6 w-16 h-16 bg-pink-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-pink-600 transition-colors">
+        <Plus size={30} strokeWidth={3} />
+      </button>
 
-      <Modal isOpen={!!modal.type} onClose={() => setModal({ type: null, data: null })} title={modal.data?.id ? '修改購物內容' : '新增購物清單'}>
-        <FormField label="商品名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} placeholder="如：Matin Kim 經典短 T" />
-        <FormField label="預計購買店家/商場（選填）" value={modal.data?.shopName} onChange={v => setModal({ ...modal, data: { ...modal.data, shopName: v } })} placeholder="如：新世界百貨 Centum City" />
-        <FormField label="Map 連結（選填：可貼 NAVER 或 Google Map）" value={modal.data?.mapUrl} onChange={v => setModal({ ...modal, data: { ...modal.data, mapUrl: v } })} placeholder="貼上地圖分享網址" />
-        <FormField label="備註小細節" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} placeholder="如：幫誰帶的、大約價格" />
+      {/* ── 新增/編輯 Modal ── */}
+      <Modal isOpen={!!modal.type} onClose={() => setModal({ type: null, data: null })} title={modal.data?.id ? '修改購物內容' : '新增購物願望'}>
+
+        {/* 城市 */}
+        <div className="mb-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🏙️ 城市</label>
+          {!showCustomCity ? (
+            <select value={modal.data?.city || ''} onChange={e => { if (e.target.value === '__NEW__') { setShowCustomCity(true); return; } setModal(p => ({ ...p, data: { ...p.data, city: e.target.value, mall: '', location: '' } })); }} className="w-full bg-white border border-slate-200 rounded-2xl p-4 font-bold text-slate-700 outline-none text-sm shadow-sm">
+              {citiesPool.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value="__NEW__">➕ 新增城市...</option>
+            </select>
+          ) : (
+            <div className="flex gap-2">
+              <input autoFocus type="text" placeholder="輸入城市名稱" value={customCity} onChange={e => setCustomCity(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-2xl p-4 font-semibold text-sm text-slate-700 outline-none" />
+              <button type="button" onClick={() => { if (!customCity.trim()) return; setModal(p => ({ ...p, data: { ...p.data, city: customCity.trim(), mall: '', location: '' } })); setShowCustomCity(false); setCustomCity(''); }} className="px-4 bg-pink-500 text-white font-bold rounded-2xl text-xs">套用</button>
+              <button type="button" onClick={() => setShowCustomCity(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
+            </div>
+          )}
+        </div>
+
+        {/* 商場/店名 */}
+        <div className="mb-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🏪 商場 / 店名</label>
+          {!showCustomMall ? (
+            <select value={modal.data?.mall || ''} onChange={e => { if (e.target.value === '__NEW__') { setShowCustomMall(true); return; } setModal(p => ({ ...p, data: { ...p.data, mall: e.target.value } })); }} className="w-full bg-white border border-slate-200 rounded-2xl p-4 font-bold text-slate-700 outline-none text-sm shadow-sm">
+              <option value="">無特定商場</option>
+              {getMallsForCity(modalCity).map(m => <option key={m} value={m}>{m}</option>)}
+              <option value="__NEW__">➕ 新增商場/店名...</option>
+            </select>
+          ) : (
+            <div className="flex gap-2">
+              <input autoFocus type="text" placeholder="例如：Olive Young、唐吉訶德" value={customMall} onChange={e => setCustomMall(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-2xl p-4 font-semibold text-sm text-slate-700 outline-none" />
+              <button type="button" onClick={() => { if (!customMall.trim()) return; setModal(p => ({ ...p, data: { ...p.data, mall: customMall.trim() } })); setShowCustomMall(false); setCustomMall(''); }} className="px-4 bg-pink-500 text-white font-bold rounded-2xl text-xs">套用</button>
+              <button type="button" onClick={() => setShowCustomMall(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
+            </div>
+          )}
+        </div>
+
+        {/* 地區/樓層 */}
+        <div className="mb-3">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🗺 地區 / 分店 / 樓層</label>
+          {!showCustomLocation ? (
+            <select value={modal.data?.location || ''} onChange={e => { if (e.target.value === '__NEW__') { setShowCustomLocation(true); return; } setModal(p => ({ ...p, data: { ...p.data, location: e.target.value } })); }} className="w-full bg-white border border-slate-200 rounded-2xl p-4 font-bold text-slate-700 outline-none text-sm shadow-sm">
+              <option value="">無特定地區</option>
+              {getLocationsForCity(modalCity).map(l => <option key={l} value={l}>{l}</option>)}
+              <option value="__NEW__">➕ 新增地區/樓層...</option>
+            </select>
+          ) : (
+            <div className="flex gap-2">
+              <input autoFocus type="text" placeholder="例如：B2F、西面店、3F 美妝區" value={customLocation} onChange={e => setCustomLocation(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-2xl p-4 font-semibold text-sm text-slate-700 outline-none" />
+              <button type="button" onClick={() => { if (!customLocation.trim()) return; setModal(p => ({ ...p, data: { ...p.data, location: customLocation.trim() } })); setShowCustomLocation(false); setCustomLocation(''); }} className="px-4 bg-pink-500 text-white font-bold rounded-2xl text-xs">套用</button>
+              <button type="button" onClick={() => setShowCustomLocation(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
+            </div>
+          )}
+        </div>
+
+        <FormField label="🛍️ 商品名稱" value={modal.data?.name} placeholder="例如：Matin Kim 短袖、蜂蜜奶油杏仁" onChange={v => setModal(p => ({ ...p, data: { ...p.data, name: v } }))} />
+        <FormField label="🌐 Map 連結（選填）" value={modal.data?.mapUrl} placeholder="貼上 Google Map 或 NAVER Map 連結" onChange={v => setModal(p => ({ ...p, data: { ...p.data, mapUrl: v } }))} />
+        <FormField label="💡 備註（尺寸、顏色、幫誰帶等）" type="textarea" value={modal.data?.note} placeholder="例如：深藍色 M 號、幫媽媽帶、約 3000 韓元" onChange={v => setModal(p => ({ ...p, data: { ...p.data, note: v } }))} />
+
+        {/* 相片 */}
         <div className="mb-4">
-          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">相片（最多 5 張）</label>
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">📷 商品照片（最多 5 張）</label>
           <div className="flex flex-wrap gap-2">
             {tempPhotos.map((url, idx) => (
-              <div className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-100 shadow-sm" key={idx}>
-                <img src={url} className="w-full h-full object-cover" alt="temp" />
-                <button onClick={() => setTempPhotos(tempPhotos.filter((_, i) => i !== idx))} className="absolute top-1 right-1 p-1 bg-red-500/90 text-white rounded-lg backdrop-blur-sm"><X size={12} /></button>
+              <div key={idx} className="relative w-16 h-16 rounded-xl overflow-hidden border border-slate-100 shadow-sm">
+                <img src={url} className="w-full h-full object-cover" alt="tmp" />
+                <button onClick={() => setTempPhotos(p => p.filter((_, i) => i !== idx))} className="absolute top-1 right-1 p-1 bg-red-500/90 text-white rounded-lg"><X size={12} /></button>
               </div>
             ))}
-            {tempPhotos.length < 5 && <button onClick={() => document.getElementById('shopping-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 transition-colors shadow-sm"><Camera size={24} /></button>}
+            {tempPhotos.length < 5 && <button onClick={() => document.getElementById('shopping-photo-up').click()} className="w-16 h-16 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 shadow-sm"><Camera size={24} /></button>}
           </div>
           <input type="file" id="shopping-photo-up" className="hidden" multiple accept="image/*" onChange={e => {
-            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => [...p, compressed]); }; r.readAsDataURL(file); });
+            Array.from(e.target.files).forEach(file => { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result); setTempPhotos(p => p.length < 5 ? [...p, compressed] : p); }; r.readAsDataURL(file); });
           }} />
         </div>
+
         <button onClick={() => {
-          if (!modal.data.name) return;
-          const finalData = { ...modal.data, photos: tempPhotos, isBought: modal.data.isBought || false, memberId: currentMember?.id || '', city: cityTab, createdById: modal.data.createdById || currentMember?.id || '', createdAt: modal.data.createdAt || Date.now() };
-          
+          if (!modal.data?.name) return;
+          const finalData = { ...modal.data, photos: tempPhotos, isBought: modal.data.isBought || false, memberId: currentMember?.id || '', createdById: modal.data.createdById || currentMember?.id || '', createdAt: modal.data.createdAt || Date.now() };
           if (modal.data.id) {
             setShoppingList(p => p.map(s => {
-              if (s.id === modal.data.id) {
-                if (s.walletRecordId) {
-                  const updateRecord = (wList) => wList.map(w => w.id === s.walletRecordId ? {
-                    ...w, name: `購買: ${finalData.name}`, amount: finalData.price || '0', currency: finalData.currency, note: finalData.note || '自購物清單連動'
-                  } : w);
-                  if (s.recordedIn === '共用錢包') setSharedWallet(updateRecord);
-                  else if (s.recordedIn === '個人記帳') setPersonalWallet(updateRecord);
-                }
-                return finalData;
+              if (s.id !== modal.data.id) return s;
+              if (s.walletRecordId) {
+                const updateRecord = wList => wList.map(w => w.id === s.walletRecordId ? { ...w, name: `購買: ${finalData.name}`, note: finalData.note || '自購物清單連動' } : w);
+                if (s.recordedIn === '共用錢包') setSharedWallet(updateRecord);
+                else if (s.recordedIn === '個人記帳') setPersonalWallet(updateRecord);
               }
-              return s;
+              return finalData;
             }));
           } else {
             setShoppingList(p => [...p, { ...finalData, id: Date.now() }]);
           }
           setModal({ type: null }); setTempPhotos([]);
-        }} className="w-full bg-pink-500 text-white font-bold py-4 rounded-2xl shadow-md active:scale-95 mt-1 text-base hover:bg-pink-600 transition-colors">確認儲存清單</button>
+        }} className="w-full bg-pink-500 text-white font-black py-4 rounded-2xl shadow-md active:scale-95 mt-1 text-base hover:bg-pink-600 transition-colors">確認儲存</button>
       </Modal>
 
       <BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
@@ -1378,13 +2086,23 @@ const WalletTab = ({ onDownload }) => {
     }
   }, [currentMember?.id]);
 
-  const viewPersonalWallet = useMemo(() => allPersonalWallets[viewMemberId] || EMPTY_ARRAY, [allPersonalWallets, viewMemberId]);
+  const viewPersonalWallet = useMemo(() => {
+    if (!allPersonalWallets || !viewMemberId) return EMPTY_ARRAY;
+    return allPersonalWallets[viewMemberId] || EMPTY_ARRAY;
+  }, [allPersonalWallets, viewMemberId]);
+
   const isOwner = viewMemberId === currentMember?.id;
-  const activeWallet = subTab === '共用錢包' ? sharedWallet : viewPersonalWallet;
+  
+  const activeWallet = useMemo(() => {
+    const w = subTab === '共用錢包' ? sharedWallet : viewPersonalWallet;
+    return Array.isArray(w) ? w : EMPTY_ARRAY;
+  }, [subTab, sharedWallet, viewPersonalWallet]);
+
   const setActiveWallet = subTab === '共用錢包' ? setSharedWallet : (isOwner ? setPersonalWallet : () => {});
 
   const visibleWalletDates = useMemo(() => {
-    return [...new Set(activeWallet.map(item => item.date))].sort();
+    if (!Array.isArray(activeWallet)) return EMPTY_ARRAY;
+    return [...new Set(activeWallet.map(item => item?.date).filter(Boolean))].sort();
   }, [activeWallet]);
 
   const [selectedDate, setSelectedDate] = useState(() => {
@@ -1400,33 +2118,46 @@ const WalletTab = ({ onDownload }) => {
 
   const walletTotals = useMemo(() => {
     const totals = { JPY: 0, KRW: 0, TWD: 0 };
-    activeWallet.forEach(item => {
-      const amt = Number(item.amount) || 0;
-      if (item.type === '存入') totals[item.currency] += amt; else totals[item.currency] -= amt;
-    });
+    if (Array.isArray(activeWallet)) {
+      activeWallet.forEach(item => {
+        if (!item) return;
+        const amt = Number(item.amount) || 0;
+        if (totals[item.currency] !== undefined) {
+          if (item.type === '存入') totals[item.currency] += amt; else totals[item.currency] -= amt;
+        }
+      });
+    }
     return totals;
   }, [activeWallet]);
 
   const filteredWalletItems = useMemo(() => {
-    const list = activeWallet.filter(i => i.date === selectedDate);
+    if (!Array.isArray(activeWallet)) return EMPTY_ARRAY;
+    const list = activeWallet.filter(i => i && i.date === selectedDate);
     const order = { JPY: 1, KRW: 2, TWD: 3 };
-    return [...list].sort((a, b) => order[a.currency] - order[b.currency] || (a.createdAt || 0) - (b.createdAt || 0));
+    return [...list].sort((a, b) => (order[a?.currency] || 9) - (order[b?.currency] || 9) || (a?.createdAt || 0) - (b?.createdAt || 0));
   }, [activeWallet, selectedDate]);
 
   const dailySum = useMemo(() => {
     const sum = { JPY: 0, KRW: 0, TWD: 0 };
-    filteredWalletItems.forEach(item => {
-      const amt = Number(item.amount) || 0;
-      if (item.type === '存入') sum[item.currency] += amt; else sum[item.currency] -= amt;
-    });
+    if (Array.isArray(filteredWalletItems)) {
+      filteredWalletItems.forEach(item => {
+        if (!item) return;
+        const amt = Number(item.amount) || 0;
+        if (sum[item.currency] !== undefined) {
+          if (item.type === '存入') sum[item.currency] += amt; else sum[item.currency] -= amt;
+        }
+      });
+    }
     return sum;
   }, [filteredWalletItems]);
 
   const handleDeleteWalletItem = (item) => {
+    if (!item) return;
     setConfirmDel({ fn: () => setActiveWallet(p => p.filter(w => w.id !== item.id)) });
   };
 
   const handleDeleteDate = (d) => {
+    if (!d) return;
     setDateConfirmDel({ fn: () => setActiveWallet(p => p.filter(w => w.date !== d)) });
   };
 
@@ -1435,7 +2166,6 @@ const WalletTab = ({ onDownload }) => {
     setModal({ type: 'add', data: { type: '支出', currency: 'JPY', date: defaultDate } });
   };
 
-  // 🌟 安全下載機制：徹底截斷任何父子元件渲染迴圈
   const downloadDataRef = React.useRef();
   downloadDataRef.current = { subTab, selectedDate, filteredWalletItems };
 
@@ -1443,8 +2173,9 @@ const WalletTab = ({ onDownload }) => {
     if (typeof onDownload === 'function') {
       onDownload(() => () => {
         const currentData = downloadDataRef.current;
+        if (!currentData || !currentData.filteredWalletItems) return;
         let text = `${currentData.subTab} - ${currentData.selectedDate}\n\n`;
-        currentData.filteredWalletItems.forEach(i => { text += `[${i.type}] ${i.name} : ${i.currency} ${i.amount}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
+        currentData.filteredWalletItems.forEach(i => { if (i) text += `[${i.type}] ${i.name} : ${i.currency} ${i.amount}\n`; if (i?.note) text += `備註: ${i.note}\n`; text += '--\n'; });
         downloadTextFile(text, `Wallet_${currentData.subTab}_${currentData.selectedDate.replace('/', '-')}`);
       });
     }
@@ -1459,18 +2190,16 @@ const WalletTab = ({ onDownload }) => {
   return (
     <div className="relative pb-28">
       <div className="px-4 pt-5 mb-4">
-        {/* 頁籤切換 */}
         <div className="flex bg-violet-50/50 p-1.5 rounded-[2rem] border border-violet-100 mb-5">
           {['共用錢包', '個人記帳'].map(t => (
             <button key={t} type="button" onClick={() => setSubTab(t)} className={`flex-1 py-2.5 text-sm font-bold rounded-2xl transition-all ${subTab === t ? 'bg-violet-500 text-white shadow-md' : 'text-violet-400 hover:text-violet-600'}`}>{t}</button>
           ))}
         </div>
 
-        {/* 外幣總額框 */}
         <div className="grid grid-cols-3 gap-3 mb-4">
           {['JPY', 'KRW', 'TWD'].map(cur => {
-            const c = currencyConfig[cur];
-            const val = walletTotals[cur];
+            const c = currencyConfig[cur] || currencyConfig.TWD;
+            const val = walletTotals[cur] || 0;
             return (
               <div key={cur} className={`bg-white border-2 ${c.border} p-4 rounded-3xl text-center shadow-sm hover:shadow-md transition-shadow`}>
                 <p className={`text-[10px] font-black ${c.textLight} mb-1 uppercase tracking-widest`}>{cur}</p>
@@ -1481,7 +2210,6 @@ const WalletTab = ({ onDownload }) => {
         </div>
       </div>
 
-      {/* 日期 Sticky 導航 */}
       <div className="sticky top-0 z-30 px-4 pt-3 pb-3 bg-white/95 backdrop-blur-md border-y border-slate-100 mb-5 flex flex-col gap-3">
         {visibleWalletDates.length > 0 && (
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
@@ -1494,18 +2222,18 @@ const WalletTab = ({ onDownload }) => {
           </div>
         )}
         <div className="flex gap-3 text-[10px] font-black uppercase tracking-widest bg-white py-2 px-4 rounded-full border border-slate-200 shadow-sm w-fit ml-auto">
-          {Object.entries(dailySum).map(([cur, val]) => (
-            <span key={cur} className={val >= 0 ? 'text-red-500' : 'text-blue-500'}>{cur} {val > 0 ? '+' : ''}{val.toLocaleString()}</span>
+          {Object.entries(dailySum || {}).map(([cur, val]) => (
+            <span key={cur} className={val >= 0 ? 'text-red-500' : 'text-blue-500'}>{cur} {val > 0 ? '+' : ''}{(val || 0).toLocaleString()}</span>
           ))}
         </div>
       </div>
 
-      {/* 流水帳明細 */}
       <div className="space-y-3 px-4">
         {filteredWalletItems.map(item => {
+          if (!item) return null;
           const c = currencyConfig[item.currency] || currencyConfig.TWD;
           const isIncome = item.type === '存入';
-          const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '成員' };
+          const editor = (allMembers || []).find(m => m && m.id === item.editedById) || { name: item.lastEdited || '成員' };
 
           return (
             <div key={item.id} className={`relative p-4 rounded-2xl shadow-sm transition-shadow group ${c.bg} border ${c.border}`}>
@@ -1513,7 +2241,7 @@ const WalletTab = ({ onDownload }) => {
                 {(subTab === '共用錢包' || isOwner) && (
                   <>
                     <button type="button" onClick={() => setModal({ type: 'edit', data: item })} className="p-1.5 text-slate-500 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm"><Edit2 size={13} /></button>
-                    <button type="button" onClick={() => handleDeleteWalletItem(item)} className="p-1.5 text-red-500 bg-white hover:bg-red-50 rounded-lg transition-colors border border-red-200 shadow-sm"><Trash2 size={13} /></button>
+                    <button type="button" onClick={() => handleDeleteWalletItem(item)} className="p-1.5 text-red-500 bg-white hover:bg-red-100 rounded-lg transition-colors border border-red-200 shadow-sm"><Trash2 size={13} /></button>
                   </>
                 )}
               </div>
@@ -1527,12 +2255,12 @@ const WalletTab = ({ onDownload }) => {
                 {item.note && <p className="text-xs text-slate-600 italic bg-white/70 border-l-4 border-violet-200 p-2 rounded-r-xl mb-1.5">{item.note}</p>}
                 <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-2">
                   <Avatar member={editor} className="w-3.5 h-3.5 rounded-md" />
-                  <span>{editor.name} 記帳</span>
+                  <span>{editor?.name || '未知'} 記帳</span>
                 </div>
               </div>
 
               <div className="flex justify-end items-center gap-1.5 mt-2">
-                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-red-500' : 'text-blue-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount).toLocaleString()}</p>
+                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-red-500' : 'text-blue-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
                 {isIncome ? <TrendingUp size={22} className="text-red-400 opacity-80" /> : <TrendingDown size={22} className="text-blue-300 opacity-80" />}
               </div>
             </div>
@@ -1545,12 +2273,11 @@ const WalletTab = ({ onDownload }) => {
         <button type="button" onClick={handleAddClick} className="fixed bottom-[110px] right-6 w-16 h-16 bg-violet-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-violet-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
       )}
 
-      {/* 新增/編輯視窗 */}
       <Modal isOpen={!!modal.type} onClose={() => { setModal({ type: null, data: null }); setIsCalcOpen(false); }} title={modal.data?.id ? '編輯帳目' : '新增帳目'}>
         <FormField label="項目名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} placeholder="如：機票公費、晚餐代墊" />
         <div className="flex bg-slate-50 p-1.5 rounded-2xl mb-4 shrink-0 border border-slate-100">
           {['存入', '支出'].map(t => (
-            <button key={t} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, type: t } })} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${modal.data?.type === t ? (t === '存入' ? 'bg-red-500 text-white shadow-md' : 'bg-blue-500 text-white shadow-md') : 'text-slate-400 hover:text-slate-600'}`}>{t}</button>
+            <button key={t} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, type: t } })} className={`flex-1 py-2.5 text-sm font-bold rounded-xl transition-all ${modal.data?.type === t ? 'bg-red-500 text-white shadow-md' : 'bg-blue-500 text-white shadow-md'}`}>{t}</button>
           ))}
         </div>
         
@@ -1604,7 +2331,7 @@ const ListTab = ({ onDownload }) => {
   useEffect(() => { if (subTab === '個人清單') setViewMemberId(currentMember.id); }, [subTab, currentMember.id]);
 
   const sortedTodos = useMemo(() => {
-    const targetList = sharedTodos.filter(t => subTab === '共用清單' ? t.type === '共用' : (t.type === '個人' && t.ownerId === viewMemberId));
+    const targetList = sharedTodos.filter(t => t && (subTab === '共用清單' ? t.type === '共用' : (t.type === '個人' && t.ownerId === viewMemberId)));
     return [...targetList.filter(t => !t.status).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)), ...targetList.filter(t => t.status).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))];
   }, [sharedTodos, subTab, viewMemberId]);
 
@@ -1613,16 +2340,15 @@ const ListTab = ({ onDownload }) => {
   useEffect(() => {
     onDownload(() => () => {
       let text = `${subTab}\n\n`;
-      sortedTodos.forEach(i => { text += `[${i.status ? 'V' : ' '}] ${i.content}\n`; if (i.note) text += `備註: ${i.note}\n`; text += '--\n'; });
+      sortedTodos.forEach(i => { if (i) text += `[${i.status ? 'V' : ' '}] ${i.content}\n`; if (i?.note) text += `備註: ${i.note}\n`; text += '--\n'; });
       downloadTextFile(text, `List_${subTab}`);
     });
   }, [sortedTodos, subTab, onDownload]);
 
   const handleToggle = (todo) => {
-    if (!isOwner) return;
+    if (!isOwner || !todo) return;
     const now = new Date();
     const ts = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
-    // 🌟 記錄勾選者的 completedById
     setSharedTodos(p => p.map(it => it.id === todo.id ? { ...it, status: !it.status, completedById: !it.status ? currentMember.id : null, completedAt: !it.status ? ts : null } : it));
   };
 
@@ -1648,7 +2374,7 @@ const ListTab = ({ onDownload }) => {
 
       <div className="space-y-4 mt-5 px-4">
         {sortedTodos.map(todo => {
-          // 🌟 核心對照：動態解析編輯者與勾選完成者
+          if (!todo) return null;
           const editor = allMembers.find(m => m.id === todo.editedById) || { name: todo.lastEdited || '成員' };
           const completer = allMembers.find(m => m.id === todo.completedById) || { name: todo.completedBy || '成員' };
 
@@ -1694,7 +2420,6 @@ const ListTab = ({ onDownload }) => {
         <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} />
         <button onClick={() => {
           if (!modal.data.content) return;
-          // 🌟 紀錄端更換為 editedById
           const final = { ...modal.data, type: subTab === '共用清單' ? '共用' : '個人', ownerId: currentMember.id, editedById: currentMember.id, status: modal.data.status || false, createdAt: modal.data.createdAt || Date.now() };
           if (modal.data.id) setSharedTodos(p => p.map(it => it.id === modal.data.id ? final : it));
           else setSharedTodos(p => [...p, { ...final, id: Date.now() }]);
@@ -1719,12 +2444,15 @@ const NotesTab = ({ onDownload }) => {
   const activeNotes = subTab === '共用記事' ? sharedNotes : personalNotes;
   const setActiveNotes = subTab === '共用記事' ? setSharedNotes : setPersonalNotes;
 
-  const sortedNotes = useMemo(() => [...activeNotes].sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0)), [activeNotes]);
+  const sortedNotes = useMemo(() => {
+    if (!Array.isArray(activeNotes)) return EMPTY_ARRAY;
+    return [...activeNotes].filter(Boolean).sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+  }, [activeNotes]);
 
   useEffect(() => {
     onDownload(() => () => {
       let text = `${subTab}\n\n`;
-      sortedNotes.forEach(i => { text += `[${i.date}] ${i.content}\n--\n`; });
+      sortedNotes.forEach(i => { if (i) text += `[${i.date}] ${i.content}\n--\n`; });
       downloadTextFile(text, `Notes_${subTab}`);
     });
   }, [sortedNotes, subTab, onDownload]);
@@ -1741,7 +2469,7 @@ const NotesTab = ({ onDownload }) => {
 
       <div className="space-y-4">
         {sortedNotes.map(note => {
-          // 🌟 核心對照：動態匹配記事本的作者
+          if (!note) return null;
           const editor = allMembers.find(m => m.id === note.editedById) || { name: note.lastEdited || '成員' };
 
           return (
@@ -1787,7 +2515,6 @@ const NotesTab = ({ onDownload }) => {
           if (!modal.data.content && !tempPhoto) return;
           const now = new Date();
           const ts = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')} ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}`;
-          // 🌟 儲存端改用 editedById
           const final = { ...modal.data, content: modal.data.content || '', photo: tempPhoto, date: modal.data.date || ts, editedById: currentMember.id, createdAtMs: modal.data.createdAtMs || now.getTime() };
           if (modal.data.id) setActiveNotes(p => p.map(n => n.id === modal.data.id ? final : n));
           else setActiveNotes(p => [{ ...final, id: Date.now() }, ...p]);
@@ -1799,6 +2526,7 @@ const NotesTab = ({ onDownload }) => {
     </div>
   );
 };
+
 // ─── InitScreen / AuthScreen ──────────────────────────────────────────────────
 const InitScreen = () => {
   const { createInitialAdmin, initName, setInitName } = useMember();
@@ -1826,16 +2554,19 @@ const AuthScreen = () => {
         <p className="text-sm font-bold text-slate-400 tracking-widest uppercase">選擇您的身分進入</p>
       </div>
       <div className="space-y-3">
-        {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
-          <button key={m.id} onClick={() => login(m)} className="w-full bg-white border border-slate-100 p-4 rounded-[2rem] shadow-sm hover:shadow-md flex items-center gap-5 active:scale-95 transition-all text-left group">
-            <Avatar member={m} className="w-14 h-14 shadow-sm" />
-            <div className="flex-1">
-              <h3 className="text-lg font-black text-slate-800">{m.name}</h3>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{m.role}</p>
-            </div>
-            <ChevronRight size={24} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
-          </button>
-        ))}
+        {Array.isArray(allMembers) && [...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => {
+          if (!m) return null;
+          return (
+            <button key={m.id} onClick={() => login(m)} className="w-full bg-white border border-slate-100 p-4 rounded-[2rem] shadow-sm hover:shadow-md flex items-center gap-5 active:scale-95 transition-all text-left group">
+              <Avatar member={m} className="w-14 h-14 shadow-sm" />
+              <div className="flex-1">
+                <h3 className="text-lg font-black text-slate-800">{m.name}</h3>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{m.role}</p>
+              </div>
+              <ChevronRight size={24} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -1932,7 +2663,7 @@ const MainLayout = () => {
               <div className={`p-2.5 rounded-2xl transition-all ${isActive ? 'bg-slate-50' : ''}`}>
                 <Icon size={26} strokeWidth={isActive ? 2.5 : 2} />
               </div>
-              <span classNae={`text-[10px] font-bold mt-0.5 ${isActive ? 'opacity-100' : 'opacity-0'}`}>{tab.label}</span>
+              <span className={`text-[10px] font-bold mt-0.5 ${isActive ? 'opacity-100' : 'opacity-0'}`}>{tab.label}</span>
             </button>
           );
         })}
@@ -1949,7 +2680,6 @@ const MainLayout = () => {
           </div>
           <input type="file" id="profile-photo-up" className="hidden" accept="image/*" onChange={e => {
             const file = e.target.files[0];
-            // 🌟 核心修正：呼叫自動相片壓縮
             if (file) { const r = new FileReader(); r.onloadend = async () => { const compressed = await compressImageBase64(r.result, 200, 200); setEditPhoto(compressed); }; r.readAsDataURL(file); }
           }} />
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">點擊更換頭像</p>
@@ -1962,20 +2692,23 @@ const MainLayout = () => {
       <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="使用者管理">
         <div className="space-y-2 mb-5">
           <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2 block">成員清單（依建立時間）</label>
-          {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
-            <div key={m.id} className="flex justify-between items-center bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
-              <div className="flex items-center gap-3">
-                <Avatar member={m} className="w-10 h-10 text-sm shadow-sm" />
-                <span className="text-sm font-bold text-slate-700">{m.name}</span>
+          {Array.isArray(allMembers) && [...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => {
+            if (!m) return null;
+            return (
+              <div key={m.id} className="flex justify-between items-center bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <Avatar member={m} className="w-10 h-10 text-sm shadow-sm" />
+                  <span className="text-sm font-bold text-slate-700">{m.name}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-black px-2.5 py-1.5 rounded-md uppercase tracking-wider ${m.role === '管理員' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-slate-50 text-slate-500 border border-slate-100'}`}>{m.role}</span>
+                  {currentMember?.role === '管理員' && m.id !== currentMember.id && (
+                    <button onClick={() => setConfirmDelMember({ fn: () => setAllMembers(p => p.filter(x => x.id !== m.id)), name: m.name })} className="p-2 text-red-500 bg-red-50 rounded-xl active:scale-90 hover:bg-red-100 transition-colors"><Trash2 size={14} /></button>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <span className={`text-[10px] font-black px-2.5 py-1.5 rounded-md uppercase tracking-wider ${m.role === '管理員' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-slate-50 text-slate-500 border border-slate-100'}`}>{m.role}</span>
-                {currentMember?.role === '管理員' && m.id !== currentMember.id && (
-                  <button onClick={() => setConfirmDelMember({ fn: () => setAllMembers(p => p.filter(x => x.id !== m.id)), name: m.name })} className="p-2 text-red-500 bg-red-50 rounded-xl active:scale-90 hover:bg-red-100 transition-colors"><Trash2 size={14} /></button>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         {currentMember?.role === '管理員' && (
           <div className="bg-blue-50/50 p-4 rounded-3xl border border-blue-100 shadow-sm">
@@ -1996,37 +2729,46 @@ const MainLayout = () => {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setLoadingTimeout(true), 12000);
+    return () => clearTimeout(t);
+  }, []);
+
   return (
     <MemberProvider>
       <MemberContext.Consumer>
         {({ allMembers, currentMember, isMembersLoading }) => {
-          // 🌟 核心攔截：自訂超可愛的飛機虛線 Loading 畫面
           if (isMembersLoading) {
             return (
               <div className="h-screen max-w-md mx-auto flex flex-col justify-center items-center bg-slate-50 p-8">
-                
-                {/* ✈️ 飛機與虛線等待動效容器 */}
                 <div className="w-64 relative flex items-center justify-center mb-8 py-4">
-                  {/* 橫向飛行虛線軌道 */}
                   <div className="absolute left-0 right-0 h-0 border-t-2 border-dashed border-blue-200 animate-pulse" />
-                  
-                  {/* 飛機本體（模擬高空巡航，溫和漂浮） */}
                   <div className="bg-slate-50 px-4 z-10 animate-bounce" style={{ animationDuration: '2.5s' }}>
-                    <Plane size={38} className="text-blue-500 rotate-90 transform" />
+                    <Plane size={38} className="text-blue-500 -rotate-12 transform" />
                   </div>
                 </div>
-                
-                {/* 提示文字 */}
-                <p className="text-xs font-black text-slate-400 tracking-widest uppercase animate-pulse">
-                  航班準備中，正在導航至雲端...
-                </p>
-                
+                {loadingTimeout ? (
+                  <div className="text-center">
+                    <p className="text-xs font-black text-red-400 tracking-widest uppercase mb-2">
+                      連線逾時，請檢查網路
+                    </p>
+                    <button
+                      onClick={() => window.location.reload()}
+                      className="text-xs font-bold text-blue-500 underline underline-offset-2"
+                    >
+                      點此重新整理
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-xs font-black text-slate-400 tracking-widest uppercase animate-pulse">
+                    航班準備中，正在導航至雲端...
+                  </p>
+                )}
               </div>
             );
           }
-
-          // 下面的分流邏輯保持不變
-          if (allMembers.length === 0) return <InitScreen />;
+          if (!allMembers || allMembers.length === 0) return <InitScreen />;
           if (!currentMember) return <AuthScreen />;
           return <MainLayout />;
         }}

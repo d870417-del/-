@@ -1,8 +1,10 @@
-// src/firebase.js
+// 1. 這裡原本就有
 import { initializeApp } from "firebase/app";
-// 🌟 1. 加上這一行，引入 Firestore 資料庫功能
+import { getAnalytics } from "firebase/analytics";
+// 💡 新增這一行：引入 Firestore 資料庫功能
 import { getFirestore } from "firebase/firestore"; 
 
+// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyAyWPYURhMqYRvZrS7BkY3vOaQNczoSp6U",
   authDomain: "busan-tokyo-travel.firebaseapp.com",
@@ -13,8 +15,10 @@ const firebaseConfig = {
   measurementId: "G-YFS5Q2Z66C"
 };
 
-// 初始化 Firebase App
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
 
-// 🌟 2. 核心關鍵：將資料庫服務初始化，並用 export 匯出給 App.js 使用！
-export const db = getFirestore(app); 
+// 💡 新增這兩行：初始化 Firestore 並將 db 導出
+const db = getFirestore(app);
+export { db };
