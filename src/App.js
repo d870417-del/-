@@ -49,15 +49,14 @@ const useCloudState = (key, initial) => {
 
     // 即時監聽雲端：只要任何一人修改，全體 6 人的畫面會在 1 秒內自動更新
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setState(docSnap.data().value);
-      } else {
-        setDoc(docRef, { value: initial }).catch(err => console.error(err));
-      }
-      setLoading(false); // 🌟 關鍵：只要 Firebase 第一次回應了，就關閉 loading！
-    }, (error) => {
-      console.error("Firebase 監聽失敗:", error);
-      setLoading(false);
+    if (docSnap.exists()) {
+    const val = docSnap.data().value;
+     // ✅ 加這行：確保拿到的值是陣列才 setState
+    setState(Array.isArray(val) ? val : (val ?? initial));
+    } else {
+    setDoc(docRef, { value: initial }).catch(err => console.error(err));
+    }
+    setLoading(false);
     });
 
     return () => unsubscribe();
@@ -608,11 +607,13 @@ const TripPage = ({ onDownload }) => {
 
   const visibleTripDates = tripDates;
 
-  const filteredItems = useMemo(() => {
-    const items = globalItinerary.filter(i => i.date === selectedDate);
-    if (selectedDate === '待安排') return items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-  }, [globalItinerary, selectedDate]);
+const filteredItems = useMemo(() => {
+  // ✅ 加這行：globalItinerary 不是陣列就回傳空陣列
+  if (!Array.isArray(globalItinerary)) return [];
+  const items = globalItinerary.filter(i => i && i.date === selectedDate);
+  if (selectedDate === '待安排') return items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+}, [globalItinerary, selectedDate]);
 
   useEffect(() => {
     if (viewMode === 'map' && filteredItems.length > 0) {
