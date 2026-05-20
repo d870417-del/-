@@ -849,7 +849,7 @@ const TripPage = ({ onDownload }) => {
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
             {filteredItems.length > 0 ? (
-              <MapEmbed queries={filteredItems.map(getMapQuery)} />
+              <MapEmbed queries={filteredItems.filter(i => i.location || i.mapUrl).map(getMapQuery)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無行程可顯示</div>
             )}
@@ -1301,7 +1301,7 @@ const FoodPage = ({ onDownload }) => {
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
             {filteredFoodList.length > 0 ? (
-              <MapEmbed queries={filteredFoodList.map(i => [i.name, i.city].filter(Boolean).join(' '))} />
+              <MapEmbed queries={filteredFoodList.filter(i => i.city || i.mapUrl).map(i => [i.name, i.city].filter(Boolean).join(' '))} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無美食可顯示</div>
             )}
@@ -1943,7 +1943,7 @@ const ShoppingPage = ({ onDownload }) => {
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
             {filteredList.length > 0 ? (
-              <MapEmbed queries={filteredList.map(i => [(i.mall || i.shopName || i.name), i.city].filter(Boolean).join(' '))} />
+              <MapEmbed queries={filteredList.filter(i => i.mall || i.shopName || i.mapUrl).map(i => [(i.mall || i.shopName || i.name), i.city].filter(Boolean).join(' '))} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無購物項目可顯示</div>
             )}
