@@ -66,13 +66,15 @@ const useCloudState = (key, initial) => {
     }, 10000);
 
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      clearTimeout(timeoutId);
       if (docSnap.exists()) {
         setState(docSnap.data().value);
       } else {
-        setDoc(docRef, { value: initial }).catch(err => console.error(err));
+        setDoc(docRef, { value: initialRef.current }).catch(err => console.error(err));
       }
-      setLoading(false); // 🌟 關鍵：只要 Firebase 第一次回應了，就關閉 loading！
+      setLoading(false);
     }, (error) => {
+      clearTimeout(timeoutId);
       console.error("Firebase 監聽失敗:", error);
       setLoading(false);
     });
@@ -98,18 +100,24 @@ const useCloudState = (key, initial) => {
 };
 
 // ─── 輔助元件：地圖嵌入 (Map Embed) ──────────────────────────────────────────
-const MapEmbed = ({ query }) => (
-  <iframe
-    width="100%"
-    height="100%"
-    frameBorder="0"
-    scrolling="no"
-    marginHeight="0"
-    marginWidth="0"
-    src={`http://googleusercontent.com/maps.google.com/?q=${encodeURIComponent(query)}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
-    className="grayscale-[10%] contrast-[1.05]"
-  ></iframe>
-);
+const MapEmbed = ({ query }) => {
+  if (!query) return (
+    <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-400 text-xs font-bold">暫無地點資訊</div>
+  );
+  return (
+    <iframe
+      width="100%"
+      height="100%"
+      frameBorder="0"
+      scrolling="no"
+      marginHeight="0"
+      marginWidth="0"
+      src={`https://maps.google.com/maps?q=${encodeURIComponent(query)}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
+      className="grayscale-[10%] contrast-[1.05]"
+      title="map"
+    ></iframe>
+  );
+};
 
 // ─── Photo Viewer Modal (圖片預覽器) ─────────────────────────────────────────
 const PhotoViewerModal = ({ photos, initialIndex = 0, isOpen, onClose }) => {
@@ -243,6 +251,19 @@ export function MemberProvider({ children }) {
     foodTypes: ['燒肉', '豬肉湯飯', '甜點咖啡', '拉麵', '壽司', '居酒屋', '海鮮', '炸雞', '韓式料理', '和食'],
   });
 
+  // ── 購物選項（城市、商場、地區）存在 Firebase，全員可增刪改 ──
+  const [shopOptions, setShopOptions] = useCloudState(`${appId}:shopOptions`, {
+    cities: ['釜山', '東京'],
+    malls: {
+      '釜山': ['新世界百貨', '樂天免稅店', '樂天百貨', 'Olive Young', 'Centum City'],
+      '東京': ['Don Quijote', '大創 DAISO', '松本清', '伊勢丹', '高島屋', 'BIC Camera', 'Yodobashi'],
+    },
+    locations: {
+      '釜山': ['海雲台店', '西面店', '南浦洞店', 'Centum City', 'BIFF廣場旁'],
+      '東京': ['涉谷店', '新宿店', '銀座店', '秋葉原店', '池袋店', '原宿店'],
+    },
+  });
+
   const [allPersonalWallets, setAllPersonalWallets] = useCloudState(`${appId}:allPersonalWallets`, {});
   const [allPersonalNotes, setAllPersonalNotes] = useCloudState(`${appId}:allPersonalNotes`, {});
 
@@ -292,6 +313,7 @@ export function MemberProvider({ children }) {
     sharedWallet, setSharedWallet, sharedNotes, setSharedNotes,
     personalWallet, setPersonalWallet, allPersonalWallets, personalNotes, setPersonalNotes,
     foodOptions, setFoodOptions,
+    shopOptions, setShopOptions,
   };
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
@@ -654,13 +676,11 @@ const TripPage = ({ onDownload }) => {
 
   const visibleTripDates = tripDates;
 
-const filteredItems = useMemo(() => {
-  // ✅ 加這行：globalItinerary 不是陣列就回傳空陣列
-  if (!Array.isArray(globalItinerary)) return [];
-  const items = globalItinerary.filter(i => i && i.date === selectedDate);
-  if (selectedDate === '待安排') return items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-  return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-}, [globalItinerary, selectedDate]);
+  const filteredItems = useMemo(() => {
+    const items = globalItinerary.filter(i => i.date === selectedDate);
+    if (selectedDate === '待安排') return items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    return items.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  }, [globalItinerary, selectedDate]);
 
   useEffect(() => {
     if (viewMode === 'map' && filteredItems.length > 0) {
@@ -1554,19 +1574,15 @@ const CurrencyBadge = ({ amount, currency, type }) => {
 };
 
 // ─── ShoppingPage ─────────────────────────────────────────────────────────────
-// 購物預設選項
-const SHOP_CITIES_DEFAULT = ['釜山', '東京'];
-const SHOP_MALLS = {
-  '釜山': ['新世界百貨', '樂天免稅店', '樂天百貨', 'Olive Young', 'Centum City'],
-  '東京': ['Don Quijote', '大創 DAISO', '松本清', '伊勢丹', '高島屋', 'BIC Camera', 'Yodobashi'],
-};
-const SHOP_LOCATIONS = {
-  '釜山': ['海雲台店', '西面店', '南浦洞店', 'Centum City', 'BIFF廣場旁'],
-  '東京': ['涉谷店', '新宿店', '銀座店', '秋葉原店', '池袋店', '原宿店'],
-};
-
 const ShoppingPage = ({ onDownload }) => {
-  const { allMembers, currentMember, shoppingList, setShoppingList, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, walletDates, setWalletDates } = useMember();
+  const { allMembers, currentMember, shoppingList, setShoppingList, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, walletDates, setWalletDates, shopOptions, setShopOptions } = useMember();
+
+  // ── shopOptions 安全取值 ──
+  const citiesPool = shopOptions?.cities || [];
+  const mallsMap = shopOptions?.malls || {};
+  const locationsMap = shopOptions?.locations || {};
+  const getMallsForCity = useCallback((city) => mallsMap[city] || [], [mallsMap]);
+  const getLocationsForCity = useCallback((city) => locationsMap[city] || [], [locationsMap]);
 
   // ── 篩選狀態 ──
   const [selectedMemberId, setSelectedMemberId] = useState('all');
@@ -1592,22 +1608,8 @@ const ShoppingPage = ({ onDownload }) => {
   const [showCustomLocation, setShowCustomLocation] = useState(false);
 
   // ── 選項池（動態從清單擴充）──
-  const citiesPool = useMemo(() => {
-    const saved = shoppingList.map(s => s.city).filter(Boolean);
-    return Array.from(new Set([...SHOP_CITIES_DEFAULT, ...saved]));
-  }, [shoppingList]);
 
-  const getMallsForCity = useCallback((city) => {
-    const base = SHOP_MALLS[city] || [];
-    const saved = shoppingList.filter(s => s.city === city).map(s => s.mall).filter(Boolean);
-    return Array.from(new Set([...base, ...saved]));
-  }, [shoppingList]);
 
-  const getLocationsForCity = useCallback((city) => {
-    const base = SHOP_LOCATIONS[city] || [];
-    const saved = shoppingList.filter(s => s.city === city).map(s => s.location).filter(Boolean);
-    return Array.from(new Set([...base, ...saved]));
-  }, [shoppingList]);
 
   const topMalls = useMemo(() => {
     if (selectedCity === '全部城市') return [];
@@ -1708,8 +1710,73 @@ const ShoppingPage = ({ onDownload }) => {
     });
   };
 
+  const [showManageShopOptions, setShowManageShopOptions] = useState(false);
+  const [editingShopOption, setEditingShopOption] = useState(null);
+  const [newShopCityInput, setNewShopCityInput] = useState('');
+  const [showNewShopCity, setShowNewShopCity] = useState(false);
+
+  // ── shopOptions helpers ──
+  const addShopCity = (city) => {
+    if (!city.trim() || citiesPool.includes(city)) return;
+    setShopOptions(prev => ({ ...prev, cities: [...(prev?.cities || []), city.trim()] }));
+  };
+  const renameShopCity = (oldVal, newVal) => {
+    if (!newVal.trim() || newVal === oldVal) return;
+    setShopOptions(prev => ({
+      ...prev,
+      cities: (prev?.cities || []).map(c => c === oldVal ? newVal.trim() : c),
+      malls: Object.fromEntries(Object.entries(prev?.malls || {}).map(([k, v]) => [k === oldVal ? newVal.trim() : k, v])),
+      locations: Object.fromEntries(Object.entries(prev?.locations || {}).map(([k, v]) => [k === oldVal ? newVal.trim() : k, v])),
+    }));
+    setShoppingList(p => p.map(s => s.city === oldVal ? { ...s, city: newVal.trim() } : s));
+    setEditingShopOption(null);
+  };
+  const deleteShopCity = (city) => {
+    setShopOptions(prev => {
+      const { [city]: _m, ...restMalls } = (prev?.malls || {});
+      const { [city]: _l, ...restLocs } = (prev?.locations || {});
+      return { ...prev, cities: (prev?.cities || []).filter(c => c !== city), malls: restMalls, locations: restLocs };
+    });
+    setShoppingList(p => p.map(s => s.city === city ? { ...s, city: '' } : s));
+  };
+  const addShopMall = (city, mall) => {
+    if (!mall.trim()) return;
+    setShopOptions(prev => {
+      const cur = prev?.malls?.[city] || [];
+      if (cur.includes(mall)) return prev;
+      return { ...prev, malls: { ...(prev?.malls || {}), [city]: [...cur, mall.trim()] } };
+    });
+  };
+  const renameShopMall = (city, oldVal, newVal) => {
+    if (!newVal.trim() || newVal === oldVal) return;
+    setShopOptions(prev => ({ ...prev, malls: { ...(prev?.malls || {}), [city]: (prev?.malls?.[city] || []).map(m => m === oldVal ? newVal.trim() : m) } }));
+    setShoppingList(p => p.map(s => s.mall === oldVal && s.city === city ? { ...s, mall: newVal.trim() } : s));
+    setEditingShopOption(null);
+  };
+  const deleteShopMall = (city, mall) => {
+    setShopOptions(prev => ({ ...prev, malls: { ...(prev?.malls || {}), [city]: (prev?.malls?.[city] || []).filter(m => m !== mall) } }));
+    setShoppingList(p => p.map(s => s.mall === mall && s.city === city ? { ...s, mall: '' } : s));
+  };
+  const addShopLocation = (city, loc) => {
+    if (!loc.trim()) return;
+    setShopOptions(prev => {
+      const cur = prev?.locations?.[city] || [];
+      if (cur.includes(loc)) return prev;
+      return { ...prev, locations: { ...(prev?.locations || {}), [city]: [...cur, loc.trim()] } };
+    });
+  };
+  const renameShopLocation = (city, oldVal, newVal) => {
+    if (!newVal.trim() || newVal === oldVal) return;
+    setShopOptions(prev => ({ ...prev, locations: { ...(prev?.locations || {}), [city]: (prev?.locations?.[city] || []).map(l => l === oldVal ? newVal.trim() : l) } }));
+    setShoppingList(p => p.map(s => s.location === oldVal && s.city === city ? { ...s, location: newVal.trim() } : s));
+    setEditingShopOption(null);
+  };
+  const deleteShopLocation = (city, loc) => {
+    setShopOptions(prev => ({ ...prev, locations: { ...(prev?.locations || {}), [city]: (prev?.locations?.[city] || []).filter(l => l !== loc) } }));
+    setShoppingList(p => p.map(s => s.location === loc && s.city === city ? { ...s, location: '' } : s));
+  };
+
   const openAddModal = () => {
-    setModal({ type: 'add', data: { city: selectedCity !== '全部城市' ? selectedCity : (citiesPool[0] || '釜山'), mall: selectedMall !== '全部商場' ? selectedMall : '', location: selectedLocation !== '全部地區' ? selectedLocation : '' } });
     setTempPhotos([]);
     setShowCustomCity(false); setShowCustomMall(false); setShowCustomLocation(false);
     setCustomCity(''); setCustomMall(''); setCustomLocation('');
@@ -1773,12 +1840,17 @@ const ShoppingPage = ({ onDownload }) => {
           </select>
         </div>
 
-        {/* 計數 + 清除 */}
+        {/* 計數 + 清除 + 管理 */}
         <div className="px-4 pb-2 flex items-center justify-between">
           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">共 {filteredList.length} 件・{filteredList.filter(i => i.isBought).length} 件已買</span>
-          {(selectedCity !== '全部城市' || selectedMall !== '全部商場' || selectedLocation !== '全部地區' || selectedMemberId !== 'all') && (
-            <button onClick={() => { setSelectedCity('全部城市'); setSelectedMall('全部商場'); setSelectedLocation('全部地區'); setSelectedMemberId('all'); }} className="text-[10px] font-black text-pink-400 hover:text-pink-600 transition-colors">清除篩選</button>
-          )}
+          <div className="flex items-center gap-3">
+            {(selectedCity !== '全部城市' || selectedMall !== '全部商場' || selectedLocation !== '全部地區' || selectedMemberId !== 'all') && (
+              <button onClick={() => { setSelectedCity('全部城市'); setSelectedMall('全部商場'); setSelectedLocation('全部地區'); setSelectedMemberId('all'); }} className="text-[10px] font-black text-pink-400 hover:text-pink-600 transition-colors">清除篩選</button>
+            )}
+            <button onClick={() => setShowManageShopOptions(true)} className="flex items-center gap-1 text-[10px] font-black text-slate-400 hover:text-slate-600 transition-colors">
+              <Settings size={11} />管理選項
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2010,6 +2082,106 @@ const ShoppingPage = ({ onDownload }) => {
           }
           setModal({ type: null }); setTempPhotos([]);
         }} className="w-full bg-pink-500 text-white font-black py-4 rounded-2xl shadow-md active:scale-95 mt-1 text-base hover:bg-pink-600 transition-colors">確認儲存</button>
+      </Modal>
+
+      {/* ── 管理選項 Modal ── */}
+      <Modal isOpen={showManageShopOptions} onClose={() => { setShowManageShopOptions(false); setEditingShopOption(null); }} title="管理購物選項">
+        {/* 城市 */}
+        <div className="mb-5">
+          <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">🏙️ 城市</p>
+          {citiesPool.map(val => (
+            <div key={val} className="flex items-center gap-2 mb-2">
+              {editingShopOption?.type === 'city' && editingShopOption?.oldVal === val ? (
+                <>
+                  <input autoFocus type="text" value={editingShopOption.newVal} onChange={e => setEditingShopOption(p => ({ ...p, newVal: e.target.value }))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-pink-300" />
+                  <button onClick={() => renameShopCity(val, editingShopOption.newVal)} className="px-3 py-2 bg-pink-500 text-white rounded-xl text-xs font-bold">儲存</button>
+                  <button onClick={() => setEditingShopOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm font-bold text-slate-700 px-1">{val}</span>
+                  <button onClick={() => setEditingShopOption({ type: 'city', oldVal: val, newVal: val })} className="p-2 bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-pink-500 rounded-xl transition-colors"><Edit2 size={13} /></button>
+                  <button onClick={() => setConfirmDel({ title: `刪除城市「${val}」`, message: `刪除後「${val}」下的商場和地區選項也會移除，店家城市欄位會清空。`, fn: () => deleteShopCity(val) })} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"><Trash2 size={13} /></button>
+                </>
+              )}
+            </div>
+          ))}
+          {showNewShopCity ? (
+            <div className="flex gap-2 mt-1">
+              <input autoFocus type="text" placeholder="新城市名稱" value={newShopCityInput} onChange={e => setNewShopCityInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && (addShopCity(newShopCityInput), setNewShopCityInput(''), setShowNewShopCity(false))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-pink-300" />
+              <button onClick={() => { addShopCity(newShopCityInput); setNewShopCityInput(''); setShowNewShopCity(false); }} className="px-3 py-2 bg-pink-500 text-white rounded-xl text-xs font-bold">新增</button>
+              <button onClick={() => setShowNewShopCity(false)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowNewShopCity(true)} className="text-xs font-black text-pink-400 hover:text-pink-600 flex items-center gap-1 mt-1"><Plus size={12} />新增城市</button>
+          )}
+        </div>
+
+        {/* 各城市商場 */}
+        {citiesPool.map(city => (
+          <div key={city} className="mb-5">
+            <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">🏪 {city} 商場/店名</p>
+            {(mallsMap[city] || []).map(val => (
+              <div key={val} className="flex items-center gap-2 mb-2">
+                {editingShopOption?.type === 'mall' && editingShopOption?.city === city && editingShopOption?.oldVal === val ? (
+                  <>
+                    <input autoFocus type="text" value={editingShopOption.newVal} onChange={e => setEditingShopOption(p => ({ ...p, newVal: e.target.value }))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-pink-300" />
+                    <button onClick={() => renameShopMall(city, val, editingShopOption.newVal)} className="px-3 py-2 bg-pink-500 text-white rounded-xl text-xs font-bold">儲存</button>
+                    <button onClick={() => setEditingShopOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 text-sm font-bold text-slate-700 px-1">{val}</span>
+                    <button onClick={() => setEditingShopOption({ type: 'mall', city, oldVal: val, newVal: val })} className="p-2 bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-pink-500 rounded-xl transition-colors"><Edit2 size={13} /></button>
+                    <button onClick={() => setConfirmDel({ title: `刪除「${val}」`, message: '該商場標籤會從所有項目中移除，項目本身不刪除。', fn: () => deleteShopMall(city, val) })} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"><Trash2 size={13} /></button>
+                  </>
+                )}
+              </div>
+            ))}
+            {editingShopOption?.type === 'newMall' && editingShopOption?.city === city ? (
+              <div className="flex gap-2 mt-1">
+                <input autoFocus type="text" placeholder="新商場名稱" value={editingShopOption.newVal} onChange={e => setEditingShopOption(p => ({ ...p, newVal: e.target.value }))} onKeyDown={e => e.key === 'Enter' && (addShopMall(city, editingShopOption.newVal), setEditingShopOption(null))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-pink-300" />
+                <button onClick={() => { addShopMall(city, editingShopOption.newVal); setEditingShopOption(null); }} className="px-3 py-2 bg-pink-500 text-white rounded-xl text-xs font-bold">新增</button>
+                <button onClick={() => setEditingShopOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+              </div>
+            ) : (
+              <button onClick={() => setEditingShopOption({ type: 'newMall', city, newVal: '' })} className="text-xs font-black text-pink-400 hover:text-pink-600 flex items-center gap-1 mt-1"><Plus size={12} />新增商場</button>
+            )}
+          </div>
+        ))}
+
+        {/* 各城市地區/樓層 */}
+        {citiesPool.map(city => (
+          <div key={city} className="mb-5">
+            <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">🗺 {city} 地區/分店/樓層</p>
+            {(locationsMap[city] || []).map(val => (
+              <div key={val} className="flex items-center gap-2 mb-2">
+                {editingShopOption?.type === 'location' && editingShopOption?.city === city && editingShopOption?.oldVal === val ? (
+                  <>
+                    <input autoFocus type="text" value={editingShopOption.newVal} onChange={e => setEditingShopOption(p => ({ ...p, newVal: e.target.value }))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-pink-300" />
+                    <button onClick={() => renameShopLocation(city, val, editingShopOption.newVal)} className="px-3 py-2 bg-pink-500 text-white rounded-xl text-xs font-bold">儲存</button>
+                    <button onClick={() => setEditingShopOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex-1 text-sm font-bold text-slate-700 px-1">{val}</span>
+                    <button onClick={() => setEditingShopOption({ type: 'location', city, oldVal: val, newVal: val })} className="p-2 bg-slate-50 hover:bg-pink-50 text-slate-400 hover:text-pink-500 rounded-xl transition-colors"><Edit2 size={13} /></button>
+                    <button onClick={() => setConfirmDel({ title: `刪除「${val}」`, message: '該地區標籤會從所有項目中移除，項目本身不刪除。', fn: () => deleteShopLocation(city, val) })} className="p-2 bg-slate-50 hover:bg-red-50 text-slate-400 hover:text-red-500 rounded-xl transition-colors"><Trash2 size={13} /></button>
+                  </>
+                )}
+              </div>
+            ))}
+            {editingShopOption?.type === 'newLocation' && editingShopOption?.city === city ? (
+              <div className="flex gap-2 mt-1">
+                <input autoFocus type="text" placeholder="例如：B2F、西面店" value={editingShopOption.newVal} onChange={e => setEditingShopOption(p => ({ ...p, newVal: e.target.value }))} onKeyDown={e => e.key === 'Enter' && (addShopLocation(city, editingShopOption.newVal), setEditingShopOption(null))} className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-pink-300" />
+                <button onClick={() => { addShopLocation(city, editingShopOption.newVal); setEditingShopOption(null); }} className="px-3 py-2 bg-pink-500 text-white rounded-xl text-xs font-bold">新增</button>
+                <button onClick={() => setEditingShopOption(null)} className="px-3 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold">取消</button>
+              </div>
+            ) : (
+              <button onClick={() => setEditingShopOption({ type: 'newLocation', city, newVal: '' })} className="text-xs font-black text-pink-400 hover:text-pink-600 flex items-center gap-1 mt-1"><Plus size={12} />新增地區/樓層</button>
+            )}
+          </div>
+        ))}
       </Modal>
 
       <BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
