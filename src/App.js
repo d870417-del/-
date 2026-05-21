@@ -99,102 +99,33 @@ const useCloudState = (key, initial) => {
   return [state, set, loading];
 };
 
-// ─── Google Maps JavaScript API 多點標記地圖 ──────────────────────────────────
+// ─── 地圖嵌入 (iframe 多點版) ──────────────────────────────────────────────────
 const GOOGLE_MAPS_API_KEY = 'AIzaSyD8V5bJLigATt1WJ8esgapLIIbKEAYOUXc';
 
 const MapEmbed = ({ query, queries = [] }) => {
-  const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const markersRef = useRef([]);
+  const allQueries = queries.length > 0 ? queries : (query ? [query] : []);
+  const valid = allQueries.filter(Boolean);
 
-  // 支援單一 query 或多個 queries
-  const allQueries = useMemo(() => {
-    const q = queries.length > 0 ? queries : (query ? [query] : []);
-    return q.filter(Boolean);
-  }, [query, queries]);
-
-  useEffect(() => {
-    if (allQueries.length === 0) return;
-
-    const initMap = () => {
-      if (!mapRef.current) return;
-      if (!mapInstanceRef.current) {
-        mapInstanceRef.current = new window.google.maps.Map(mapRef.current, {
-          zoom: 13,
-          center: { lat: 35.6762, lng: 139.6503 },
-          mapTypeControl: false,
-          streetViewControl: false,
-          fullscreenControl: false,
-          zoomControlOptions: { position: window.google.maps.ControlPosition.RIGHT_CENTER },
-        });
-      }
-
-      // 清除舊標記
-      markersRef.current.forEach(m => m.setMap(null));
-      markersRef.current = [];
-
-      const geocoder = new window.google.maps.Geocoder();
-      const bounds = new window.google.maps.LatLngBounds();
-      let resolved = 0;
-
-      allQueries.forEach((q, idx) => {
-        geocoder.geocode({ address: q }, (results, status) => {
-          resolved++;
-          if (status === 'OK' && results[0]) {
-            const pos = results[0].geometry.location;
-            bounds.extend(pos);
-            const marker = new window.google.maps.Marker({
-              map: mapInstanceRef.current,
-              position: pos,
-              title: q,
-              label: { text: String(idx + 1), color: 'white', fontWeight: 'bold', fontSize: '12px' },
-              icon: {
-                path: window.google.maps.SymbolPath.CIRCLE,
-                scale: 16,
-                fillColor: '#ec4899',
-                fillOpacity: 1,
-                strokeColor: 'white',
-                strokeWeight: 2,
-              },
-            });
-            const infoWindow = new window.google.maps.InfoWindow({ content: `<div style="font-weight:bold;font-size:13px;padding:2px 4px">${q}</div>` });
-            marker.addListener('click', () => infoWindow.open(mapInstanceRef.current, marker));
-            markersRef.current.push(marker);
-          }
-          if (resolved === allQueries.length && markersRef.current.length > 0) {
-            if (markersRef.current.length === 1) {
-              mapInstanceRef.current.setCenter(markersRef.current[0].getPosition());
-              mapInstanceRef.current.setZoom(15);
-            } else {
-              mapInstanceRef.current.fitBounds(bounds);
-            }
-          }
-        });
-      });
-    };
-
-    if (window.google?.maps) {
-      initMap();
-    } else {
-      const existingScript = document.getElementById('gmaps-script');
-      if (!existingScript) {
-        const script = document.createElement('script');
-        script.id = 'gmaps-script';
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}`;
-        script.async = true;
-        script.onload = initMap;
-        document.head.appendChild(script);
-      } else {
-        existingScript.addEventListener('load', initMap);
-      }
-    }
-  }, [allQueries]);
-
-  if (allQueries.length === 0) {
+  if (valid.length === 0) {
     return <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-400 text-xs font-bold">暫無地點資訊</div>;
   }
 
-  return <div ref={mapRef} className="w-full h-full" />;
+  // 單點用 place 模式，精準定位
+  // 多點用 search 模式，把所有地名串在一起讓 Google 標出來
+  const src = valid.length === 1
+    ? `https://www.google.com/maps/embed/v1/place?key=${GOOGLE_MAPS_API_KEY}&q=${encodeURIComponent(valid[0])}&language=zh-TW`
+    : `https://www.google.com/maps/embed/v1/search?key=${GOOGLE_MAPS_API_KEY}&q=${encodeURIComponent(valid.join(' OR '))}&language=zh-TW`;
+
+  return (
+    <iframe
+      width="100%"
+      height="100%"
+      frameBorder="0"
+      src={src}
+      allowFullScreen
+      title="map"
+    />
+  );
 };
 
 // ─── Photo Viewer Modal (圖片預覽器) ─────────────────────────────────────────
@@ -849,7 +780,7 @@ const TripPage = ({ onDownload }) => {
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
             {filteredItems.length > 0 ? (
-              <MapEmbed queries={filteredItems.filter(i => i.location || i.mapUrl).map(getMapQuery)} />
+              <MapEmbed queries={filteredItems.map(getMapQuery)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無行程可顯示</div>
             )}
@@ -1301,7 +1232,7 @@ const FoodPage = ({ onDownload }) => {
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
             {filteredFoodList.length > 0 ? (
-              <MapEmbed queries={filteredFoodList.filter(i => i.city || i.mapUrl).map(i => [i.name, i.city].filter(Boolean).join(' '))} />
+              <MapEmbed queries={filteredFoodList.map(i => [i.name, i.city].filter(Boolean).join(' '))} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無美食可顯示</div>
             )}
@@ -1943,7 +1874,7 @@ const ShoppingPage = ({ onDownload }) => {
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
             {filteredList.length > 0 ? (
-              <MapEmbed queries={filteredList.filter(i => i.mall || i.shopName || i.mapUrl).map(i => [(i.mall || i.shopName || i.name), i.city].filter(Boolean).join(' '))} />
+              <MapEmbed queries={filteredList.map(i => [(i.mall || i.shopName || i.name), i.city].filter(Boolean).join(' '))} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無購物項目可顯示</div>
             )}
