@@ -99,29 +99,19 @@ const useCloudState = (key, initial) => {
   return [state, set, loading];
 };
 
-// ─── 地圖嵌入 (iframe 多點版) ──────────────────────────────────────────────────
+// ─── 地圖嵌入 (單點 iframe) ────────────────────────────────────────────────────
 const GOOGLE_MAPS_API_KEY = 'AIzaSyD8V5bJLigATt1WJ8esgapLIIbKEAYOUXc';
 
-const MapEmbed = ({ query, queries = [] }) => {
-  const allQueries = queries.length > 0 ? queries : (query ? [query] : []);
-  const valid = allQueries.filter(Boolean);
-
-  if (valid.length === 0) {
-    return <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-400 text-xs font-bold">暫無地點資訊</div>;
-  }
-
-  // 單點用 place 模式，精準定位
-  // 多點用 search 模式，把所有地名串在一起讓 Google 標出來
-  const src = valid.length === 1
-    ? `https://www.google.com/maps/embed/v1/place?key=${GOOGLE_MAPS_API_KEY}&q=${encodeURIComponent(valid[0])}&language=zh-TW`
-    : `https://www.google.com/maps/embed/v1/search?key=${GOOGLE_MAPS_API_KEY}&q=${encodeURIComponent(valid.join(' OR '))}&language=zh-TW`;
-
+const MapEmbed = ({ query }) => {
+  if (!query) return (
+    <div className="w-full h-full flex items-center justify-center bg-slate-100 text-slate-400 text-xs font-bold">暫無地點資訊</div>
+  );
   return (
     <iframe
       width="100%"
       height="100%"
       frameBorder="0"
-      src={src}
+      src={`https://www.google.com/maps/embed/v1/place?key=${GOOGLE_MAPS_API_KEY}&q=${encodeURIComponent(query)}&language=zh-TW`}
       allowFullScreen
       title="map"
     />
@@ -779,8 +769,8 @@ const TripPage = ({ onDownload }) => {
             </button>
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100 relative">
-            {filteredItems.length > 0 ? (
-              <MapEmbed queries={filteredItems.map(getMapQuery)} />
+            {activeMapItem ? (
+              <MapEmbed query={getMapQuery(activeMapItem)} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無行程可顯示</div>
             )}
@@ -1231,8 +1221,8 @@ const FoodPage = ({ onDownload }) => {
             </button>
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
-            {filteredFoodList.length > 0 ? (
-              <MapEmbed queries={filteredFoodList.map(i => [i.name, i.city].filter(Boolean).join(' '))} />
+            {activeMapItem ? (
+              <MapEmbed query={activeMapItem.name + (activeMapItem.city ? ` ${activeMapItem.city}` : '')} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無美食可顯示</div>
             )}
@@ -1873,8 +1863,8 @@ const ShoppingPage = ({ onDownload }) => {
             </button>
           )}
           <div className="flex-1 rounded-[2rem] overflow-hidden border border-slate-200 shadow-sm bg-slate-100">
-            {filteredList.length > 0 ? (
-              <MapEmbed queries={filteredList.map(i => [(i.mall || i.shopName || i.name), i.city].filter(Boolean).join(' '))} />
+            {activeMapItem ? (
+              <MapEmbed query={[(activeMapItem.mall || activeMapItem.shopName || activeMapItem.name), activeMapItem.city].filter(Boolean).join(' ')} />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm font-bold">無購物項目可顯示</div>
             )}
