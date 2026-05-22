@@ -9,7 +9,7 @@ import {
 import { db } from './firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
-const IS_DEV = false; // 🔧 測試時改 true，上線時改 false
+const IS_DEV =false; // 🔧 測試時改 true，上線時改 false
 const appId = IS_DEV ? 'travel-pro-v42-DEV' : 'travel-pro-v42-final';
 
 // ─── 圖片自動壓縮工具（防止圖片過大撐爆 Firestore 1MB 限制） ───────────────────
