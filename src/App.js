@@ -784,12 +784,16 @@ const TripPage = ({ onDownload }) => {
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${isActive ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-600'}`}>{idx + 1}</span>
                       {item.time && <span className={`text-[10px] font-black ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>{item.time}</span>}
-                      <span className={`text-[10px] font-bold truncate ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>{item.category}</span>
+                      <span className={`text-[10px] font-bold truncate flex-1 ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>{item.category}</span>
+                      <button onClick={e => { e.stopPropagation(); setModal({ type: 'item', data: item }); setTempPhotos(item.photos || []); }}
+                        className={`p-1 rounded-lg shrink-0 transition-colors ${isActive ? 'bg-white/20 text-white' : 'bg-slate-50 text-slate-400 hover:text-blue-500'}`}>
+                        <Edit2 size={11} />
+                      </button>
                     </div>
                     <h4 className="font-bold text-sm truncate">{item.name}</h4>
                     {item.location && (
                       <p className={`text-[10px] mt-0.5 flex items-center gap-1 ${isActive ? 'text-blue-100' : 'text-slate-400'}`}>
-                        <MapPin size={9} />{ item.location}
+                        <MapPin size={9} />{item.location}
                       </p>
                     )}
                     {item.mapUrl && (
@@ -894,8 +898,8 @@ const TripPage = ({ onDownload }) => {
           }} />
         </div>
         <button onClick={() => {
-          if (!modal.data.name) return;
-          const finalData = { ...modal.data, photos: tempPhotos, editedById: currentMember.id, createdAt: modal.data.createdAt || Date.now() };
+          if (!modal.data?.name) return;
+          const finalData = { ...modal.data, date: modal.data.date || selectedDate, photos: tempPhotos, editedById: currentMember.id, createdAt: modal.data.createdAt || Date.now() };
           if (modal.data.id) setGlobalItinerary(p => p.map(it => it.id === modal.data.id ? finalData : it));
           else setGlobalItinerary(p => [...p, { ...finalData, id: Date.now() }]);
           setModal({ type: null });
@@ -1077,18 +1081,30 @@ const FoodPage = ({ onDownload }) => {
   const toggleModalDistrict = (d) => {
     setModal(prev => {
       const cur = prev.data?.districts || [];
-      const next = cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d];
-      return { ...prev, data: { ...prev.data, districts: next } };
+      const isRemoving = cur.includes(d);
+      const nextDistricts = isRemoving ? cur.filter(x => x !== d) : [...cur, d];
+      let nextBranches = prev.data?.branches || [];
+      if (!isRemoving) {
+        const alreadyHas = nextBranches.some(b => b.name === d);
+        if (!alreadyHas) nextBranches = [...nextBranches, { name: d, mapUrl: '' }];
+      } else {
+        // 取消地區時，移除對應分店（只移除名稱一樣且連結是空的，保留已填連結的）
+        nextBranches = nextBranches.filter(b => !(b.name === d && !b.mapUrl));
+      }
+      return { ...prev, data: { ...prev.data, districts: nextDistricts, branches: nextBranches } };
     });
   };
 
   const openAddModal = () => {
+    const initDistricts = selectedDistricts.length > 0 ? [...selectedDistricts] : [];
+    const initBranches = initDistricts.map(d => ({ name: d, mapUrl: '' }));
     setModal({
       type: 'food',
       data: {
         category: '美食',
         city: selectedCity !== '全部城市' ? selectedCity : '釜山',
-        districts: selectedDistricts.length > 0 ? [...selectedDistricts] : [],
+        districts: initDistricts,
+        branches: initBranches,
         foodType: selectedFoodType !== '全部食物' ? selectedFoodType : '',
         date: '待安排', time: '', name: '', mapUrl: '', note: ''
       }
@@ -1162,7 +1178,7 @@ const FoodPage = ({ onDownload }) => {
           </div>
         </div>
 
-        {/* 地區多選（只有選了城市才顯示）*/}
+        {/* 地區多選（選了城市才顯示對應地區，全部城市時不顯示）*/}
         {selectedCity !== '全部城市' && topDistricts.length > 0 && (
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-4 pb-2.5">
             {topDistricts.map(d => {
@@ -1232,16 +1248,31 @@ const FoodPage = ({ onDownload }) => {
               {filteredFoodList.map(item => {
                 const isActive = activeMapItem?.id === item.id;
                 const districts = (item.districts || []).join('·') || item.district || '';
+                const branches = item.branches || [];
+                const activeBranch = item.activeBranch || 0;
                 return (
                   <div key={item.id} onClick={() => setActiveMapItem(item)}
                     className={`w-56 p-3.5 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${isActive ? 'bg-orange-500 text-white border-orange-500 scale-105' : 'bg-white text-slate-700 border-slate-200 hover:bg-orange-50'}`}>
                     <div className="flex items-center gap-1.5 mb-1.5">
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${isActive ? 'bg-white/20 text-white' : 'bg-orange-50 text-orange-600'}`}>{item.city}</span>
-                      {districts && <span className={`text-[10px] font-bold truncate ${isActive ? 'text-orange-100' : 'text-slate-400'}`}>{districts}</span>}
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-md flex-1 truncate ${isActive ? 'bg-white/20 text-white' : 'bg-orange-50 text-orange-600'}`}>{item.city}{districts ? ` · ${districts}` : ''}</span>
+                      <button onClick={e => { e.stopPropagation(); openEditModal(item); }}
+                        className={`p-1 rounded-lg shrink-0 transition-colors ${isActive ? 'bg-white/20 text-white' : 'bg-slate-50 text-slate-400 hover:text-orange-500'}`}>
+                        <Edit2 size={11} />
+                      </button>
                     </div>
                     <h4 className="font-bold text-sm truncate">{item.name}</h4>
                     {item.foodType && <p className={`text-[10px] mt-0.5 ${isActive ? 'text-orange-100' : 'text-slate-400'}`}>#{item.foodType}</p>}
-                    {item.mapUrl && (
+                    {/* 分店列表 */}
+                    {branches.length > 0 ? (
+                      <div className="mt-1.5 space-y-1">
+                        {branches.map((b, bi) => b.mapUrl ? (
+                          <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                            className={`text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-orange-100' : 'text-orange-400'}`}>
+                            <Navigation size={9} />{b.name || `分店${bi + 1}`}
+                          </a>
+                        ) : null)}
+                      </div>
+                    ) : item.mapUrl && (
                       <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
                         className={`mt-1.5 text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-orange-100' : 'text-orange-400'}`}>
                         <Navigation size={10} />直接導航
@@ -1293,11 +1324,18 @@ const FoodPage = ({ onDownload }) => {
                     <Avatar member={editor} className="w-4 h-4 rounded-md" />
                     <span>{editor.name} 編輯</span>
                   </div>
-                  {item.mapUrl && (
-                    <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
-                      <Navigation size={13} strokeWidth={2.5} />開啟導航
-                    </a>
-                  )}
+                  <div className="flex gap-1.5 flex-wrap justify-end">
+                    {(item.branches || []).filter(b => b.mapUrl).map((b, bi) => (
+                      <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" className="px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1 text-xs font-black transition-colors">
+                        <Navigation size={11} strokeWidth={2.5} />{b.name || `分店${bi + 1}`}
+                      </a>
+                    ))}
+                    {!(item.branches || []).length && item.mapUrl && (
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
+                        <Navigation size={13} strokeWidth={2.5} />開啟導航
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -1376,15 +1414,6 @@ const FoodPage = ({ onDownload }) => {
               <button type="button" onClick={() => setShowCustomDistrict(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
             </div>
           )}
-          {modalDistricts.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {modalDistricts.map(d => (
-                <span key={d} className="flex items-center gap-1 px-2 py-1 bg-orange-100 text-orange-700 rounded-lg text-xs font-bold">
-                  {d}<button type="button" onClick={() => toggleModalDistrict(d)}><X size={10} /></button>
-                </span>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* 食物類型 */}
@@ -1418,7 +1447,34 @@ const FoodPage = ({ onDownload }) => {
           <FormField label="📅 日期" type="select" options={tripDates} value={modal.data?.date} onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, date: v } }))} />
           <FormField label="⏰ 時間（選填）" type="time" value={modal.data?.time} onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, time: v } }))} />
         </div>
-        <FormField label="🌐 Google Map 連結（選填）" value={modal.data?.mapUrl} placeholder="貼上地圖分享連結" onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, mapUrl: v } }))} />
+        {/* 有選地區就顯示分店列表，沒選就顯示單一 Map 連結 */}
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest">🗺 分店 / 地圖連結</label>
+          </div>
+          {(modal.data?.districts || []).length > 0 ? (
+            <>
+              {(modal.data?.branches || []).map((b, bi) => (
+                <div key={bi} className="flex gap-2 mb-2">
+                  <input type="text" placeholder="分店名稱（如：西面店）" value={b.name || ''}
+                    onChange={e => setModal(prev => ({ ...prev, data: { ...prev.data, branches: prev.data.branches.map((x, i) => i === bi ? { ...x, name: e.target.value } : x) } }))}
+                    className="w-28 bg-white border border-slate-200 rounded-xl p-3 font-semibold text-sm text-slate-700 outline-none shadow-sm shrink-0" />
+                  <input type="text" placeholder="Map 連結（選填）" value={b.mapUrl || ''}
+                    onChange={e => setModal(prev => ({ ...prev, data: { ...prev.data, branches: prev.data.branches.map((x, i) => i === bi ? { ...x, mapUrl: e.target.value } : x) } }))}
+                    className="flex-1 bg-white border border-slate-200 rounded-xl p-3 font-semibold text-sm text-slate-700 outline-none shadow-sm" />
+                  <button type="button" onClick={() => setModal(prev => ({ ...prev, data: { ...prev.data, branches: prev.data.branches.filter((_, i) => i !== bi) } }))}
+                    className="p-2 bg-red-50 text-red-400 rounded-xl hover:bg-red-100 transition-colors shrink-0"><X size={14} /></button>
+                </div>
+              ))}
+              <button type="button" onClick={() => setModal(prev => ({ ...prev, data: { ...prev.data, branches: [...(prev.data.branches || []), { name: '', mapUrl: '' }] } }))}
+                className="text-xs font-black text-orange-400 hover:text-orange-600 flex items-center gap-1 mt-1">
+                <Plus size={12} />新增分店
+              </button>
+            </>
+          ) : (
+            <FormField label="" value={modal.data?.mapUrl} placeholder="貼上地圖分享連結（選填）" onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, mapUrl: v } }))} />
+          )}
+        </div>
         <FormField label="💡 必點推薦與備註" type="textarea" value={modal.data?.note} placeholder="例如：必吃厚切五花肉、需提早排隊..." onChange={v => setModal(prev => ({ ...prev, data: { ...prev.data, note: v } }))} />
 
         {/* 相片 */}
@@ -1625,7 +1681,7 @@ const ShoppingPage = ({ onDownload }) => {
     const list = shoppingList.filter(s => {
       if (selectedCity !== '全部城市' && s.city !== selectedCity) return false;
       if (selectedMall !== '全部商場' && s.mall !== selectedMall) return false;
-      if (selectedLocation !== '全部地區' && s.location !== selectedLocation) return false;
+      if (selectedLocation !== '全部地區' && s.location !== selectedLocation && !(s.locations || []).includes(selectedLocation)) return false;
       if (selectedMemberId !== 'all' && s.memberId !== selectedMemberId) return false;
       return true;
     });
@@ -1776,6 +1832,15 @@ const ShoppingPage = ({ onDownload }) => {
   };
 
   const openAddModal = () => {
+    setModal({
+      type: 'add',
+      data: {
+        city: selectedCity !== '全部城市' ? selectedCity : (citiesPool[0] || '釜山'),
+        mall: selectedMall !== '全部商場' ? selectedMall : '',
+        location: selectedLocation !== '全部地區' ? selectedLocation : '',
+        branches: [],
+      }
+    });
     setTempPhotos([]);
     setShowCustomCity(false); setShowCustomMall(false); setShowCustomLocation(false);
     setCustomCity(''); setCustomMall(''); setCustomLocation('');
@@ -1791,49 +1856,37 @@ const ShoppingPage = ({ onDownload }) => {
       {/* ── 頂部篩選 Bar ── */}
       <div className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
 
-        {/* 第一排：許願者頭像 + 地圖切換 */}
+        {/* 第一排：許願者下拉 + 地圖切換 */}
         <div className="px-4 pt-3 pb-2 flex items-center gap-3">
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar flex-1">
-            {/* 全部 */}
-            <button
-              onClick={() => setSelectedMemberId('all')}
-              className={`shrink-0 flex flex-col items-center gap-1 transition-all ${selectedMemberId === 'all' ? 'scale-105' : 'opacity-50 hover:opacity-80'}`}
-            >
-              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black border-2 shadow-sm transition-all ${selectedMemberId === 'all' ? 'bg-pink-500 text-white border-pink-500' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                全
-              </div>
-              <span className={`text-[9px] font-bold tracking-wider ${selectedMemberId === 'all' ? 'text-pink-600' : 'text-slate-400'}`}>全員</span>
-            </button>
-            {/* 各成員 */}
+          <select value={selectedMemberId} onChange={e => setSelectedMemberId(e.target.value)}
+            className={`flex-1 text-xs font-black rounded-xl px-3 py-2.5 appearance-none border outline-none transition-all ${selectedMemberId !== 'all' ? 'bg-pink-500 text-white border-pink-500' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+            <option value="all" className="bg-white text-slate-800">全員</option>
             {[...allMembers].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(m => (
-              <button key={m.id} onClick={() => setSelectedMemberId(m.id)} className={`shrink-0 flex flex-col items-center gap-1 transition-all ${selectedMemberId === m.id ? 'scale-105' : 'opacity-50 hover:opacity-80'}`}>
-                <Avatar member={m} className={`w-10 h-10 shadow-sm transition-all ${selectedMemberId === m.id ? 'ring-2 ring-offset-1 ring-pink-400' : ''}`} />
-                <span className={`text-[9px] font-bold tracking-wider max-w-[40px] truncate ${selectedMemberId === m.id ? 'text-pink-600' : 'text-slate-400'}`}>
-                  {m.id === currentMember?.id ? '我' : m.name}
-                </span>
-              </button>
+              <option key={m.id} value={m.id} className="bg-white text-slate-800">
+                {m.id === currentMember?.id ? `${m.name}（我）` : m.name}
+              </option>
             ))}
-          </div>
+          </select>
           <div className="flex bg-white rounded-xl p-1 border border-slate-100 shadow-sm shrink-0">
             <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-pink-100 text-pink-500' : 'text-slate-400'}`}><List size={14} /></button>
             <button onClick={() => setViewMode('map')} className={`p-1.5 rounded-lg transition-colors ${viewMode === 'map' ? 'bg-pink-100 text-pink-500' : 'text-slate-400'}`}><Map size={14} /></button>
           </div>
         </div>
 
-        {/* 第二排：城市 + 商場 + 地區三選 */}
+        {/* 第二排：城市 + 商場 + 地區 */}
         <div className="px-4 pb-2 grid grid-cols-3 gap-2">
           <select value={selectedCity} onChange={e => { setSelectedCity(e.target.value); setSelectedMall('全部商場'); setSelectedLocation('全部地區'); }}
-            className={`text-xs font-black rounded-xl px-2 py-2.5 appearance-none border outline-none text-center transition-all ${selectedCity !== '全部城市' ? 'bg-pink-500 text-white border-pink-500' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+            className={`text-[11px] font-black rounded-xl px-1 py-2.5 appearance-none border outline-none text-center transition-all ${selectedCity !== '全部城市' ? 'bg-pink-500 text-white border-pink-500' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
             <option value="全部城市" className="bg-white text-slate-800">全部城市</option>
             {citiesPool.map(c => <option key={c} value={c} className="bg-white text-slate-800">{c}</option>)}
           </select>
           <select value={selectedMall} onChange={e => { setSelectedMall(e.target.value); setSelectedLocation('全部地區'); }}
-            className={`text-xs font-black rounded-xl px-2 py-2.5 appearance-none border outline-none text-center transition-all ${selectedMall !== '全部商場' ? 'bg-pink-100 text-pink-700 border-pink-200' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+            className={`text-[11px] font-black rounded-xl px-1 py-2.5 appearance-none border outline-none text-center transition-all ${selectedMall !== '全部商場' ? 'bg-pink-100 text-pink-700 border-pink-200' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
             <option value="全部商場" className="bg-white text-slate-800">全部商場</option>
             {topMalls.map(m => <option key={m} value={m} className="bg-white text-slate-800">{m}</option>)}
           </select>
           <select value={selectedLocation} onChange={e => setSelectedLocation(e.target.value)}
-            className={`text-xs font-black rounded-xl px-2 py-2.5 appearance-none border outline-none text-center transition-all ${selectedLocation !== '全部地區' ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
+            className={`text-[11px] font-black rounded-xl px-1 py-2.5 appearance-none border outline-none text-center transition-all ${selectedLocation !== '全部地區' ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-slate-50 text-slate-600 border-slate-100'}`}>
             <option value="全部地區" className="bg-white text-slate-800">全部地區</option>
             {topLocations.map(l => <option key={l} value={l} className="bg-white text-slate-800">{l}</option>)}
           </select>
@@ -1874,16 +1927,32 @@ const ShoppingPage = ({ onDownload }) => {
               {filteredList.map(item => {
                 const isActive = activeMapItem?.id === item.id;
                 const owner = allMembers.find(m => m.id === item.memberId) || { name: '成員', avatarColor: '#94a3b8' };
+                const branches = item.branches || [];
                 return (
                   <div key={item.id} onClick={() => setActiveMapItem(item)} className={`w-52 p-3.5 rounded-3xl shrink-0 border shadow-sm transition-all cursor-pointer ${item.isBought ? 'opacity-60' : ''} ${isActive ? 'bg-pink-500 text-white border-pink-500 scale-105 opacity-100' : 'bg-white text-slate-700 border-slate-200 hover:bg-pink-50'}`}>
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <Avatar member={owner} className="w-4 h-4 rounded-md shrink-0" />
                       <span className={`text-[10px] font-bold truncate flex-1 ${isActive ? 'text-pink-100' : 'text-slate-400'}`}>{owner.name}</span>
                       {item.isBought && <span className={`text-[10px] font-black shrink-0 ${isActive ? 'text-pink-100' : 'text-pink-400'}`}>✓</span>}
+                      <button onClick={e => { e.stopPropagation(); setModal({ type: 'edit', data: item }); setTempPhotos(item.photos || []); }}
+                        className={`p-1 rounded-lg shrink-0 transition-colors ${isActive ? 'bg-white/20 text-white' : 'bg-slate-50 text-slate-400 hover:text-pink-500'}`}>
+                        <Edit2 size={11} />
+                      </button>
                     </div>
                     <h4 className={`font-bold text-sm truncate ${item.isBought && !isActive ? 'line-through text-slate-400' : ''}`}>{item.name}</h4>
                     {(item.mall || item.shopName) && <p className={`text-[10px] mt-0.5 truncate ${isActive ? 'text-pink-100' : 'text-slate-400'}`}>🏪 {item.mall || item.shopName}</p>}
-                    {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className={`mt-1 text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-pink-100' : 'text-pink-400'}`}><Navigation size={9} />導航</a>}
+                    {branches.length > 0 ? (
+                      <div className="mt-1 space-y-0.5">
+                        {branches.filter(b => b.mapUrl).map((b, bi) => (
+                          <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                            className={`text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-pink-100' : 'text-pink-400'}`}>
+                            <Navigation size={9} />{b.name || `分店${bi + 1}`}
+                          </a>
+                        ))}
+                      </div>
+                    ) : item.mapUrl && (
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className={`mt-1 text-[10px] font-black flex items-center gap-1 ${isActive ? 'text-pink-100' : 'text-pink-400'}`}><Navigation size={9} />導航</a>
+                    )}
                   </div>
                 );
               })}
@@ -1968,11 +2037,18 @@ const ShoppingPage = ({ onDownload }) => {
                     <Avatar member={owner} className="w-4 h-4 rounded-md" />
                     <span>{owner.name} 許願</span>
                   </div>
-                  {item.mapUrl && (
-                    <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
-                      <Navigation size={13} strokeWidth={2.5} />導航
-                    </a>
-                  )}
+                  <div className="flex gap-1.5 flex-wrap justify-end">
+                    {(item.branches || []).filter(b => b.mapUrl).map((b, bi) => (
+                      <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" className="px-2.5 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1 text-xs font-black transition-colors">
+                        <Navigation size={11} strokeWidth={2.5} />{b.name || `分店${bi + 1}`}
+                      </a>
+                    ))}
+                    {!(item.branches || []).length && item.mapUrl && (
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
+                        <Navigation size={13} strokeWidth={2.5} />導航
+                      </a>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -1982,7 +2058,22 @@ const ShoppingPage = ({ onDownload }) => {
       )}
 
       {/* 新增按鈕（任何人都可以新增自己的） */}
-      <button onClick={openAddModal} className="fixed bottom-[110px] right-6 w-16 h-16 bg-pink-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-pink-600 transition-colors">
+      <button onClick={() => {
+        setModal({
+          type: 'add',
+          data: {
+            city: selectedCity !== '全部城市' ? selectedCity : (citiesPool[0] || '釜山'),
+            mall: selectedMall !== '全部商場' ? selectedMall : '',
+            location: '',
+            locations: [],
+            branches: [],
+            mapUrl: '',
+          }
+        });
+        setTempPhotos([]);
+        setShowCustomCity(false); setShowCustomMall(false); setShowCustomLocation(false);
+        setCustomCity(''); setCustomMall(''); setCustomLocation('');
+      }} className="fixed bottom-[110px] right-6 w-16 h-16 bg-pink-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-pink-600 transition-colors">
         <Plus size={30} strokeWidth={3} />
       </button>
 
@@ -2024,26 +2115,78 @@ const ShoppingPage = ({ onDownload }) => {
           )}
         </div>
 
-        {/* 地區/樓層 */}
+        {/* 地區/樓層（多選，跟美食一樣）*/}
         <div className="mb-3">
-          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🗺 地區 / 分店 / 樓層</label>
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🗺 地區 / 分店 / 樓層（可多選）</label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {getLocationsForCity(modalCity).map(l => {
+              const selected = (modal.data?.locations || []).includes(l);              return (
+                <button key={l} type="button" onClick={() => {
+                  setModal(p => {
+                    const cur = p.data?.locations || [];
+                    const isRemoving = cur.includes(l);
+                    const nextLocations = isRemoving ? cur.filter(x => x !== l) : [...cur, l];
+                    let nextBranches = p.data?.branches || [];
+                    if (!isRemoving) {
+                      const alreadyHas = nextBranches.some(b => b.name === l);
+                      if (!alreadyHas) nextBranches = [...nextBranches, { name: l, mapUrl: '' }];
+                    } else {
+                      // 取消地區時，移除對應分店（只移除名稱完全一樣且連結是空的，保留已填連結的）
+                      nextBranches = nextBranches.filter(b => !(b.name === l && !b.mapUrl));
+                    }
+                    return { ...p, data: { ...p.data, locations: nextLocations, location: nextLocations[0] || '', branches: nextBranches } };
+                  });
+                }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${selected ? 'bg-pink-500 text-white border-pink-500 shadow-sm' : 'bg-white text-slate-500 border-slate-200 hover:bg-pink-50'}`}>
+                  {l}
+                </button>
+              );
+            })}
+          </div>
           {!showCustomLocation ? (
-            <select value={modal.data?.location || ''} onChange={e => { if (e.target.value === '__NEW__') { setShowCustomLocation(true); return; } setModal(p => ({ ...p, data: { ...p.data, location: e.target.value } })); }} className="w-full bg-white border border-slate-200 rounded-2xl p-4 font-bold text-slate-700 outline-none text-sm shadow-sm">
-              <option value="">無特定地區</option>
-              {getLocationsForCity(modalCity).map(l => <option key={l} value={l}>{l}</option>)}
-              <option value="__NEW__">➕ 新增地區/樓層...</option>
-            </select>
+            <button type="button" onClick={() => setShowCustomLocation(true)} className="text-xs font-bold text-pink-400 hover:text-pink-600 transition-colors">➕ 新增自訂地區</button>
           ) : (
-            <div className="flex gap-2">
-              <input autoFocus type="text" placeholder="例如：B2F、西面店、3F 美妝區" value={customLocation} onChange={e => setCustomLocation(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-2xl p-4 font-semibold text-sm text-slate-700 outline-none" />
-              <button type="button" onClick={() => { if (!customLocation.trim()) return; setModal(p => ({ ...p, data: { ...p.data, location: customLocation.trim() } })); setShowCustomLocation(false); setCustomLocation(''); }} className="px-4 bg-pink-500 text-white font-bold rounded-2xl text-xs">套用</button>
+            <div className="flex gap-2 mt-1">
+              <input autoFocus type="text" placeholder="例如：B2F、西面店" value={customLocation} onChange={e => setCustomLocation(e.target.value)} className="flex-1 bg-white border border-slate-200 rounded-2xl p-3 font-semibold text-sm text-slate-700 outline-none" />
+              <button type="button" onClick={() => {
+                if (!customLocation.trim()) return;
+                const l = customLocation.trim();
+                setModal(p => {
+                  const cur = p.data?.locations || [];
+                  const nextLocations = cur.includes(l) ? cur : [...cur, l];
+                  const nextBranches = [...(p.data?.branches || []), { name: l, mapUrl: '' }];
+                  return { ...p, data: { ...p.data, locations: nextLocations, location: l, branches: nextBranches } };
+                });
+                setShowCustomLocation(false); setCustomLocation('');
+              }} className="px-4 bg-pink-500 text-white font-bold rounded-2xl text-xs">套用</button>
               <button type="button" onClick={() => setShowCustomLocation(false)} className="px-3 bg-slate-100 text-slate-500 font-bold rounded-2xl text-xs">取消</button>
             </div>
           )}
         </div>
 
         <FormField label="🛍️ 商品名稱" value={modal.data?.name} placeholder="例如：Matin Kim 短袖、蜂蜜奶油杏仁" onChange={v => setModal(p => ({ ...p, data: { ...p.data, name: v } }))} />
-        <FormField label="🌐 Map 連結（選填）" value={modal.data?.mapUrl} placeholder="貼上 Google Map 或 NAVER Map 連結" onChange={v => setModal(p => ({ ...p, data: { ...p.data, mapUrl: v } }))} />
+
+        {/* 有選地區就顯示分店列表，沒選就顯示單一 Map 連結 */}
+        {(modal.data?.locations || []).length > 0 ? (
+          <div className="mb-3">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">🗺 分店 / 地圖連結</label>
+            {(modal.data?.branches || []).map((b, bi) => (
+              <div key={bi} className="flex gap-2 mb-2">
+                <input type="text" placeholder="分店名稱" value={b.name || ''} onChange={e => setModal(p => ({ ...p, data: { ...p.data, branches: p.data.branches.map((x, i) => i === bi ? { ...x, name: e.target.value } : x) } }))}
+                  className="w-28 bg-white border border-slate-200 rounded-xl p-3 font-semibold text-sm text-slate-700 outline-none shadow-sm shrink-0" />
+                <input type="text" placeholder="Map 連結（選填）" value={b.mapUrl || ''} onChange={e => setModal(p => ({ ...p, data: { ...p.data, branches: p.data.branches.map((x, i) => i === bi ? { ...x, mapUrl: e.target.value } : x) } }))}
+                  className="flex-1 bg-white border border-slate-200 rounded-xl p-3 font-semibold text-sm text-slate-700 outline-none shadow-sm" />
+                <button type="button" onClick={() => setModal(p => ({ ...p, data: { ...p.data, branches: p.data.branches.filter((_, i) => i !== bi) } }))}
+                  className="p-2 bg-red-50 text-red-400 rounded-xl hover:bg-red-100 transition-colors shrink-0"><X size={14} /></button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setModal(p => ({ ...p, data: { ...p.data, branches: [...(p.data.branches || []), { name: '', mapUrl: '' }] } }))}
+              className="text-xs font-black text-pink-400 hover:text-pink-600 flex items-center gap-1 mt-1">
+              <Plus size={12} />新增分店
+            </button>
+          </div>
+        ) : (
+          <FormField label="🌐 Map 連結（選填）" value={modal.data?.mapUrl} placeholder="貼上 Google Map 或 NAVER Map 連結" onChange={v => setModal(p => ({ ...p, data: { ...p.data, mapUrl: v } }))} />
+        )}
         <FormField label="💡 備註（尺寸、顏色、幫誰帶等）" type="textarea" value={modal.data?.note} placeholder="例如：深藍色 M 號、幫媽媽帶、約 3000 韓元" onChange={v => setModal(p => ({ ...p, data: { ...p.data, note: v } }))} />
 
         {/* 相片 */}
