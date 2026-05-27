@@ -3121,7 +3121,6 @@ const WalletTab = ({ onDownload }) => {
           const isIncome = item.type === '存入';
           const isSettlementCard = !!item.isSettlement;
           const isProxyCard = !!item.isProxyRecord;
-          const isSettlementCard = !!item.isSettlement;
           const editor = (allMembers || []).find(m => m && m.id === item.editedById) || { name: item.lastEdited || '成員' };
           const allMemberIds = (allMembers || []).map(m => m.id);
 
