@@ -339,7 +339,7 @@ const ConfirmDialog = ({ isOpen, onClose, onConfirm, title, message, confirmText
         </div>
         <div className="flex gap-3 w-full mt-2">
           <button onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 text-sm hover:bg-slate-200 transition-colors">取消</button>
-          <button onClick={() => { onConfirm(); onClose(); }} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl active:scale-95 shadow-md shadow-red-100 text-sm hover:bg-red-600 transition-colors">{confirmText}</button>
+          <button onClick={() => { onClose(); setTimeout(() => onConfirm(), 50); }} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl active:scale-95 shadow-md shadow-red-100 text-sm hover:bg-red-600 transition-colors">{confirmText}</button>
         </div>
       </div>
     </div>
