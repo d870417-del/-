@@ -3028,17 +3028,16 @@ const WalletTab = ({ onDownload }) => {
             return r;
           }));
         }
-        // 如果來自購物清單，把購物項目還原成未購買
-        // 用 shoppingItemId 或 walletRecordId 找對應的購物項目
+        // 不管共用或個人，只要有連動購物清單就還原
         setShoppingList(p => (Array.isArray(p) ? p : []).map(s => {
-          if (item.shoppingItemId && s.id === item.shoppingItemId) {
-            return { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null };
-          }
-          if (s.walletRecordId && s.walletRecordId === item.id) {
+          if ((item.shoppingItemId && s.id === item.shoppingItemId) ||
+              (s.walletRecordId && s.walletRecordId === item.id)) {
             return { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null };
           }
           return s;
         }));
+        // 共用錢包也要刪
+        setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.id));
         // 同時清掉相關的 splitRecords 和 proxy
         setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.id));
         setAllPersonalWallets(prev => {
@@ -3431,20 +3430,25 @@ const WalletTab = ({ onDownload }) => {
           </div>
         )}
 
-        <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
-          <div className="flex-1">
-            <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
-            <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
-          </div>
-          <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
-        </div>
-        {isCalcOpen && (
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
-              <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
-            ))}
-            <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
-          </div>
+        {/* 共用錢包金額 */}
+        {subTab === '共用錢包' && (
+          <>
+            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
+              <div className="flex-1">
+                <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
+                <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
+              </div>
+              <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
+            </div>
+            {isCalcOpen && (
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
+                  <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
+                ))}
+                <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
+              </div>
+            )}
+          </>
         )}
 
         {/* 共用錢包：選角色 + 自訂金額 */}
