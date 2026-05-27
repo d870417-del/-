@@ -1784,7 +1784,7 @@ const ShoppingPage = ({ onDownload }) => {
     const isMarkOnly = target === '已計入共用錢包' || target === '已計入個人記帳';
     if (!isMarkOnly && target !== '略過不記帳' && price && price !== '0') {
       walletRecordId = now.getTime();
-      const record = { id: walletRecordId, name: `購買: ${boughtModal.name}`, type: '支出', amount: price, currency, date: dateStr, note: boughtModal.note || '自購物清單連動', editedById: actualPayerId, shoppingItemId: boughtModal.id, createdAt: walletRecordId };
+      const record = { id: walletRecordId, name: `購買: ${boughtModal.name}`, type: '支出', amount: price, currency, date: dateStr, note: boughtModal.note || '自購物清單連動', editedById: actualPayerId, shoppingItemId: boughtModal.id, shoppingListItemId: boughtModal.id, createdAt: walletRecordId };
 
       if (target === '共用錢包') {
         // 自動把 forMemberIds 設為項目擁有者
@@ -3029,10 +3029,11 @@ const WalletTab = ({ onDownload }) => {
           }));
         }
         // 不管共用或個人，只要有連動購物清單就還原
+        const itemId = String(item.id);
+        const shoppingItemId = item.shoppingItemId || item.shoppingListItemId;
         setShoppingList(p => (Array.isArray(p) ? p : []).map(s => {
-          const match1 = item.shoppingItemId && s.id === item.shoppingItemId;
-          const match2 = s.walletRecordId && (String(s.walletRecordId) === String(item.id));
-          console.log('[delete wallet] checking shopping item:', s.id, 'walletRecordId:', s.walletRecordId, 'item.id:', item.id, 'match:', match1 || match2);
+          const match1 = shoppingItemId && String(s.id) === String(shoppingItemId);
+          const match2 = s.walletRecordId && String(s.walletRecordId) === itemId;
           if (match1 || match2) {
             return { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null };
           }
@@ -3239,11 +3240,20 @@ const WalletTab = ({ onDownload }) => {
             const safeRecords = Array.isArray(splitRecords) ? splitRecords : [];
             const related = safeRecords.filter(r => String(r.walletItemId) === String(item.id) && r.payerId === currentMember?.id);
             if (related.length === 0) return null;
-            // 分開顯示：有刪除的用刪除線，正常的正常顯示
-            const activeNames = related.filter(r => !r.deletedByReceiver).map(r => (allMembers || []).find(m => m.id === r.receiverId)?.name).filter(Boolean);
-            const deletedNames = related.filter(r => r.deletedByReceiver).map(r => (allMembers || []).find(m => m.id === r.receiverId)?.name).filter(Boolean);
-            if (activeNames.length === 0 && deletedNames.length === 0) return null;
-            return { activeNames, deletedNames };
+            // 分開顯示：有刪除的用刪除線，正常的正常顯示，並帶金額
+            const SYM = { JPY: '¥', KRW: '₩', TWD: '$' };
+            const activeEntries = related.filter(r => !r.deletedByReceiver).map(r => ({
+              name: (allMembers || []).find(m => m.id === r.receiverId)?.name || '',
+              amount: r.amount,
+              currency: r.currency,
+            })).filter(e => e.name);
+            const deletedEntries = related.filter(r => r.deletedByReceiver).map(r => ({
+              name: (allMembers || []).find(m => m.id === r.receiverId)?.name || '',
+              amount: r.amount,
+              currency: r.currency,
+            })).filter(e => e.name);
+            if (activeEntries.length === 0 && deletedEntries.length === 0) return null;
+            return { activeEntries, deletedEntries };
           })();
 
 
@@ -3279,12 +3289,20 @@ const WalletTab = ({ onDownload }) => {
                   {splitLabel && (
                     typeof splitLabel === 'string'
                       ? <span className="text-[10px] font-bold text-violet-500 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded">{splitLabel}</span>
-                      : <span className="text-[10px] font-bold text-violet-500 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded flex items-center gap-1 flex-wrap">
-                          {splitLabel.activeNames.length > 0 && <span>我幫 {splitLabel.activeNames.join('・')} 代墊</span>}
-                          {splitLabel.deletedNames.map(n => (
-                            <span key={n} className="line-through text-slate-400">{n}</span>
+                      : <div className="mt-1 space-y-0.5">
+                          {splitLabel.activeEntries.map((e, i) => (
+                            <div key={i} className="flex items-center gap-1">
+                              <span className="text-[10px] font-bold text-violet-500">幫 {e.name} 代墊</span>
+                              <span className="text-[10px] text-violet-400">{e.currency === 'JPY' ? '¥' : e.currency === 'KRW' ? '₩' : '$'}{Number(e.amount).toLocaleString()}</span>
+                            </div>
                           ))}
-                        </span>
+                          {splitLabel.deletedEntries.map((e, i) => (
+                            <div key={i} className="flex items-center gap-1">
+                              <span className="text-[10px] font-bold text-slate-400 line-through">幫 {e.name} 代墊</span>
+                              <span className="text-[10px] text-slate-300 line-through">{e.currency === 'JPY' ? '¥' : e.currency === 'KRW' ? '₩' : '$'}{Number(e.amount).toLocaleString()}</span>
+                            </div>
+                          ))}
+                        </div>
                   )}
                 </div>
 
@@ -3385,12 +3403,15 @@ const WalletTab = ({ onDownload }) => {
               const totalAmt = Number(modal.data?.amount) || 0;
               const filledMembers = splitMembers.filter(m => m.amount !== '' && !isNaN(Number(m.amount)));
               const filledSum = filledMembers.reduce((s, m) => s + Number(m.amount), 0);
+              const selfCustomAmt = Number(modal.data?.selfAmount) || 0;
+              const selfHasCustom = modal.data?.selfAmount !== '' && modal.data?.selfAmount !== undefined && !isNaN(Number(modal.data?.selfAmount)) && modal.data?.selfAmount !== null;
               const unfilledOthers = splitMembers.filter(m => m.amount === '' || isNaN(Number(m.amount))).length;
-              const unfilledCount = unfilledOthers + (selfIncluded ? 1 : 0);
-              const remaining = Math.max(0, totalAmt - filledSum);
+              const filledSumWithSelf = filledSum + (selfHasCustom ? selfCustomAmt : 0);
+              const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
+              const remaining = Math.max(0, totalAmt - filledSumWithSelf);
               const perUnfilled = unfilledCount > 0 ? Math.floor(remaining / unfilledCount) : 0;
-              const myAmt = selfIncluded ? perUnfilled : 0;
-              const actualTotal = filledSum + myAmt + unfilledOthers * perUnfilled;
+              const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled) : 0;
+              const actualTotal = filledSumWithSelf + (selfIncluded && !selfHasCustom ? perUnfilled : 0) + unfilledOthers * perUnfilled;
               const isOver = actualTotal > totalAmt + 1;
               const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
               return (
@@ -3399,7 +3420,14 @@ const WalletTab = ({ onDownload }) => {
                   {selfIncluded && (
                     <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-violet-100">
                       <span className="text-xs font-black text-violet-600 flex-1">{(allMembers || []).find(m => m.id === currentMember?.id)?.name}（我）</span>
-                      <span className="text-xs font-bold text-violet-500">{modal.data?.currency} {myAmt > 0 ? myAmt.toLocaleString() : '—'}</span>
+                      <input
+                        type="number"
+                        value={modal.data?.selfAmount || ''}
+                        onChange={e => setModal({ ...modal, data: { ...modal.data, selfAmount: e.target.value } })}
+                        placeholder={myAmt > 0 ? myAmt.toLocaleString() : '選填'}
+                        className="w-24 text-right text-xs font-bold text-violet-600 bg-transparent outline-none border-b border-violet-200 pb-0.5"
+                      />
+                      <span className="text-[10px] text-slate-400">{modal.data?.currency}</span>
                     </div>
                   )}
                   {splitMembers.map(entry => {
@@ -3597,12 +3625,15 @@ const WalletTab = ({ onDownload }) => {
             const splitMembers = modal.data.splitMembers;
             const selfIncluded = modal.data.splitIncludeSelf !== false;
             const totalAmt = Number(modal.data.amount) || 0;
-            const count = splitMembers.length + (selfIncluded ? 1 : 0);
+            const selfHasCustom = modal.data.selfAmount !== '' && modal.data.selfAmount !== undefined && modal.data.selfAmount !== null && !isNaN(Number(modal.data.selfAmount));
+            const selfCustomAmt = selfHasCustom ? Number(modal.data.selfAmount) : 0;
             const filledSum = splitMembers.reduce((s, m) => s + (Number(m.amount) || 0), 0);
-            const unfilledCount = splitMembers.filter(m => !m.amount).length + (selfIncluded ? 1 : 0);
-            const remaining = Math.max(0, totalAmt - filledSum);
+            const filledSumWithSelf = filledSum + (selfHasCustom ? selfCustomAmt : 0);
+            const unfilledOthers = splitMembers.filter(m => !m.amount).length;
+            const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
+            const remaining = Math.max(0, totalAmt - filledSumWithSelf);
             const perUnfilled = unfilledCount > 0 ? Math.round(remaining / unfilledCount) : 0;
-            const myAmt = selfIncluded ? perUnfilled : 0;
+            const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled) : 0;
             const savedItem = { ...cleanData, id: walletItemId };
 
             // 如果是編輯，先清除舊的 splitRecords 和被分攤者的 wallet 記錄
