@@ -2109,7 +2109,8 @@ const ShoppingPage = ({ onDownload }) => {
                         if (canUncheck) { handleUncheckBought(item); return; }
                         return;
                       }
-                      if (!item.isBought) { setBoughtModal(item); return; }
+                      // 未打勾：打開 BoughtModal
+                      setBoughtModal(item); return;
                     }}
                     className={`w-9 h-9 rounded-2xl flex items-center justify-center border-2 transition-all shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white shadow-md' : 'bg-white border-pink-200 hover:border-pink-400 hover:bg-pink-50'}`}
                   >
@@ -2964,20 +2965,32 @@ const WalletTab = ({ onDownload }) => {
             ? { ...r, deletedByReceiver: true, isSettled: true, settledAt: Date.now() }
             : r
         ));
-        // 4. 修改 A（付款者）的帳務記錄金額，扣掉 C 那份
+        // 4. 修改 A（付款者）的帳務記錄金額，扣掉 C 那份；若歸零則刪掉
         if (myAmount > 0 && item.walletItemId) {
           const payerId = item.editedById;
           setAllPersonalWallets(prev => {
             const next = { ...prev };
             if (next[payerId]) {
-              next[payerId] = next[payerId].map(w => {
-                if (w.id !== item.walletItemId) return w;
+              next[payerId] = next[payerId].reduce((acc, w) => {
+                if (w.id !== item.walletItemId) { acc.push(w); return acc; }
                 const newAmt = Math.max(0, (Number(w.amount) || 0) - myAmount);
-                return { ...w, amount: newAmt };
-              });
+                if (newAmt > 0) acc.push({ ...w, amount: newAmt });
+                // 金額歸零就不加入（相當於刪除）
+                return acc;
+              }, []);
             }
             return next;
           });
+        }
+        // 5. 如果原始帳務是來自購物清單，還原購物打勾
+        const originalRecord = (Array.isArray(splitRecords) ? splitRecords : [])
+          .find(r => r.walletItemId === item.walletItemId);
+        if (originalRecord) {
+          setShoppingList(p => (Array.isArray(p) ? p : []).map(s =>
+            s.walletRecordId === item.walletItemId
+              ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null }
+              : s
+          ));
         }
       } else {
         // 正常刪除：連同 splitRecords 和 proxy 記錄一起刪
@@ -2992,14 +3005,40 @@ const WalletTab = ({ onDownload }) => {
           });
           return next;
         });
-        // 如果來自購物清單，把購物項目還原成未購買
-        if (item.shoppingItemId) {
-          setShoppingList(p => (Array.isArray(p) ? p : []).map(s =>
-            s.id === item.shoppingItemId
-              ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null }
-              : s
-          ));
+        // 如果是結清卡片（isSettlement），把對方的配對卡片也刪掉，並還原 splitRecords
+        if (item.isSettlement) {
+          const pairedId = item.id % 2 === 0 ? item.id + 1 : item.id - 1;
+          // 刪對方的配對卡片
+          setAllPersonalWallets(prev => {
+            const next = { ...prev };
+            Object.keys(next).forEach(memberId => {
+              if (Array.isArray(next[memberId])) {
+                next[memberId] = next[memberId].filter(w => w.id !== pairedId);
+              }
+            });
+            return next;
+          });
+          // 還原相關的 splitRecords（用 settlementCardId 精確配對）
+          const cardId = item.id;
+          const pairedCardId2 = item.id % 2 === 0 ? item.id + 1 : item.id - 1;
+          setSplitRecords(p => (Array.isArray(p) ? p : []).map(r => {
+            if (r.isSettled && (r.settlementCardId === cardId || r.settlementCardId === pairedCardId2)) {
+              return { ...r, isSettled: false, settledAt: null, settlementCardId: null };
+            }
+            return r;
+          }));
         }
+        // 如果來自購物清單，把購物項目還原成未購買
+        // 用 shoppingItemId 或 walletRecordId 找對應的購物項目
+        setShoppingList(p => (Array.isArray(p) ? p : []).map(s => {
+          if (item.shoppingItemId && s.id === item.shoppingItemId) {
+            return { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null };
+          }
+          if (s.walletRecordId && s.walletRecordId === item.id) {
+            return { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null };
+          }
+          return s;
+        }));
         // 同時清掉相關的 splitRecords 和 proxy
         setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.id));
         setAllPersonalWallets(prev => {
@@ -3032,6 +3071,8 @@ const WalletTab = ({ onDownload }) => {
         currency: 'JPY',
         date: dateForInput,
         splitMembers: [],
+        splitIncludeSelf: true,
+        sharedCustomAmts: {},
         contributorIds: subTab === '共用錢包' ? allMemberIds : [currentMember?.id],
         forMemberIds: subTab === '共用錢包' ? allMemberIds : [],
       }
@@ -3213,13 +3254,14 @@ const WalletTab = ({ onDownload }) => {
                     <button type="button" onClick={() => {
                       const safeRecords = Array.isArray(splitRecords) ? splitRecords : [];
                       const related = safeRecords.filter(r => String(r.walletItemId) === String(item.id) && r.payerId === currentMember?.id);
-                      const splitMembers = related.map(r => ({ id: r.receiverId, amount: String(r.amount) }));
+                      const splitMembers = related.map(r => ({ id: r.receiverId, amount: '' }));
                       const splitIncludeSelf = related.length === 0 || (() => {
                         const totalAmt = Number(item.amount) || 0;
                         const othersSum = related.reduce((s, r) => s + (Number(r.amount) || 0), 0);
                         return othersSum < totalAmt;
                       })();
-                      setModal({ type: 'edit', data: { ...item, splitMembers, splitIncludeSelf } });
+                      // 共用錢包預填 sharedCustomAmts
+                      setModal({ type: 'edit', data: { ...item, splitMembers, splitIncludeSelf, sharedCustomAmts: {} } });
                     }} className="p-1.5 text-slate-500 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm"><Edit2 size={13} /></button>
                     <button type="button" onClick={() => handleDeleteWalletItem(item)} className="p-1.5 text-red-500 bg-white hover:bg-red-100 rounded-lg transition-colors border border-red-200 shadow-sm"><Trash2 size={13} /></button>
                   </>
@@ -3616,6 +3658,10 @@ const WalletTab = ({ onDownload }) => {
             setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== modal.data.id));
           }
 
+          // 自動加日期到 walletDates
+          if (!(Array.isArray(walletDates) ? walletDates : []).includes(formattedDate)) {
+            setWalletDates(prev => [...(Array.isArray(prev) ? prev : []), formattedDate].sort());
+          }
           setSelectedDate(formattedDate); setModal({ type: null }); setIsCalcOpen(false);
         }} className="w-full bg-violet-500 text-white font-black py-4 rounded-2xl shadow-md mt-1 active:scale-95 text-base hover:bg-violet-600 transition-colors">確認儲存</button>
       </Modal>
@@ -3785,7 +3831,7 @@ const WalletTab = ({ onDownload }) => {
             };
           });
           setSplitRecords(p => (Array.isArray(p) ? p : []).map(x =>
-            x.id === r.id ? { ...x, isSettled: true, settledAt: now } : x
+            x.id === r.id ? { ...x, isSettled: true, settledAt: now, settlementCardId: now } : x
           ));
         };
 
@@ -3831,7 +3877,7 @@ const WalletTab = ({ onDownload }) => {
             const related = !x.isSettled && x.currency === t.currency &&
               ((x.payerId === t.from && x.receiverId === t.to) ||
                (x.payerId === t.to && x.receiverId === t.from));
-            return related ? { ...x, isSettled: true, settledAt: now } : x;
+            return related ? { ...x, isSettled: true, settledAt: now, settlementCardId: now } : x;
           }));
         };
 
