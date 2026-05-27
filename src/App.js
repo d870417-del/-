@@ -2860,7 +2860,7 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
 
 // ─── WalletTab ────────────────────────────────────────────────────────────────
 const WalletTab = ({ onDownload }) => {
-  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords } = useMember();
+  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shoppingList, setShoppingList } = useMember();
   const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
   const [subTab, setSubTab] = useState('共用錢包');
   const [modal, setModal] = useState({ type: null, data: null });
@@ -3030,8 +3030,10 @@ const WalletTab = ({ onDownload }) => {
         }
         // 不管共用或個人，只要有連動購物清單就還原
         setShoppingList(p => (Array.isArray(p) ? p : []).map(s => {
-          if ((item.shoppingItemId && s.id === item.shoppingItemId) ||
-              (s.walletRecordId && s.walletRecordId === item.id)) {
+          const match1 = item.shoppingItemId && s.id === item.shoppingItemId;
+          const match2 = s.walletRecordId && (String(s.walletRecordId) === String(item.id));
+          console.log('[delete wallet] checking shopping item:', s.id, 'walletRecordId:', s.walletRecordId, 'item.id:', item.id, 'match:', match1 || match2);
+          if (match1 || match2) {
             return { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null };
           }
           return s;
@@ -3386,7 +3388,7 @@ const WalletTab = ({ onDownload }) => {
               const unfilledOthers = splitMembers.filter(m => m.amount === '' || isNaN(Number(m.amount))).length;
               const unfilledCount = unfilledOthers + (selfIncluded ? 1 : 0);
               const remaining = Math.max(0, totalAmt - filledSum);
-              const perUnfilled = unfilledCount > 0 ? Math.round(remaining / unfilledCount) : 0;
+              const perUnfilled = unfilledCount > 0 ? Math.floor(remaining / unfilledCount) : 0;
               const myAmt = selfIncluded ? perUnfilled : 0;
               const actualTotal = filledSum + myAmt + unfilledOthers * perUnfilled;
               const isOver = actualTotal > totalAmt + 1;
@@ -3462,7 +3464,7 @@ const WalletTab = ({ onDownload }) => {
           const totalAmt = Number(modal.data?.amount) || 0;
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds.length > 0 ? Math.round((totalAmt - filledSum) / unfilledIds.length) : 0;
+          const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
           const actualTotal = ids.reduce((s, id) => s + (Number(customAmts[id]) || perUnfilled), 0);
           const isOver = actualTotal > totalAmt + 1;
           const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
@@ -3530,7 +3532,10 @@ const WalletTab = ({ onDownload }) => {
           </div>
         )}
         <button type="button" onClick={() => {
-          if (!modal.data?.amount || !modal.data?.date) return;
+          if (!modal.data?.amount || !modal.data?.date) {
+            alert('請填寫金額和日期');
+            return;
+          }
 
           // ── 共用錢包支出：檢查餘額是否足夠（結算退款跳過）──
           if (subTab === '共用錢包' && modal.data?.type === '支出' && !modal.data?.isSettlement) {
