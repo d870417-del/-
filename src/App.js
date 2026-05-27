@@ -3336,7 +3336,7 @@ const WalletTab = ({ onDownload }) => {
                 );
               })}
             </div>
-            {(modal.data?.splitMembers || []).length > 0 && (() => {
+            {(modal.data?.splitMembers || []).length > 0 && Number(modal.data?.amount) > 0 && (() => {
               const splitMembers = modal.data?.splitMembers || [];
               const selfIncluded = modal.data?.splitIncludeSelf !== false;
               const totalAmt = Number(modal.data?.amount) || 0;
@@ -3370,7 +3370,7 @@ const WalletTab = ({ onDownload }) => {
                             const next = splitMembers.map(s => s.id === entry.id ? { ...s, amount: e.target.value } : s);
                             setModal({ ...modal, data: { ...modal.data, splitMembers: next } });
                           }}
-                          placeholder={perUnfilled > 0 ? perUnfilled.toLocaleString() : '平分'}
+                          placeholder="選填"
                           className="w-24 text-right text-xs font-bold text-violet-600 bg-transparent outline-none border-b border-violet-200 pb-0.5" />
                         <span className="text-[10px] text-slate-400">{modal.data?.currency}</span>
                       </div>
@@ -3453,7 +3453,7 @@ const WalletTab = ({ onDownload }) => {
                             const next = { ...customAmts, [id]: e.target.value };
                             setModal({ ...modal, data: { ...modal.data, sharedCustomAmts: next } });
                           }}
-                          placeholder={perUnfilled > 0 ? perUnfilled.toLocaleString() : '平分'}
+                          placeholder="選填"
                           className={`w-24 text-right text-xs font-bold text-${color}-600 bg-transparent outline-none border-b border-${color}-200 pb-0.5`} />
                         <span className="text-[10px] text-slate-400">{modal.data?.currency}</span>
                       </div>
