@@ -1853,10 +1853,24 @@ const ShoppingPage = ({ onDownload }) => {
     setConfirmDel({
       fn: () => {
         if (item.walletRecordId) {
-          if (item.recordedIn === '共用錢包') setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
-          else if (item.recordedIn === '個人記帳') setPersonalWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
+          if (item.recordedIn === '共用錢包') {
+            setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
+          } else if (item.recordedIn === '個人記帳') {
+            // 刪付款者的帳務記錄
+            setAllPersonalWallets(prev => {
+              const next = { ...prev };
+              Object.keys(next).forEach(memberId => {
+                if (Array.isArray(next[memberId])) {
+                  next[memberId] = next[memberId].filter(w => w.id !== item.walletRecordId && w.walletItemId !== item.walletRecordId);
+                }
+              });
+              return next;
+            });
+            // 刪 splitRecords
+            setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.walletRecordId));
+          }
         }
-        setShoppingList(p => p.map(s => s.id === item.id ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null } : s));
+        setShoppingList(p => p.map(s => s.id === item.id ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null } : s));
       },
       title: '取消購買紀錄',
       message: '此操作將同時刪除對應的帳務記錄，確定繼續嗎？'
@@ -2089,7 +2103,12 @@ const ShoppingPage = ({ onDownload }) => {
                   {/* 任何人都可以打勾，但只有自己能取消 */}
                   <button
                     onClick={() => {
-                      if (item.isBought && isMine) { handleUncheckBought(item); return; }
+                      if (item.isBought) {
+                        // 誰打的勾誰能取消（completedById 是打勾者）
+                        const canUncheck = item.completedById === currentMember?.id || item.memberId === currentMember?.id;
+                        if (canUncheck) { handleUncheckBought(item); return; }
+                        return;
+                      }
                       if (!item.isBought) { setBoughtModal(item); return; }
                     }}
                     className={`w-9 h-9 rounded-2xl flex items-center justify-center border-2 transition-all shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white shadow-md' : 'bg-white border-pink-200 hover:border-pink-400 hover:bg-pink-50'}`}
@@ -2138,16 +2157,32 @@ const ShoppingPage = ({ onDownload }) => {
                           );
                         })()}
                       </div>
-                      {item.recordedIn && (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                            {item.recordedIn === '已計入共用錢包' || item.recordedIn === '已計入個人記帳' ? '✓ ' : ''}計入 {item.recordedIn.replace('已計入', '')}
-                          </span>
-                          {item.price && item.price !== '0' && (
-                            <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
-                          )}
-                        </div>
-                      )}
+                      {item.recordedIn && (() => {
+                        // 從帳務即時讀金額
+                        const isMarkOnly = item.recordedIn === '已計入共用錢包' || item.recordedIn === '已計入個人記帳';
+                        let displayAmt = item.price;
+                        let displayCur = item.currency;
+                        if (!isMarkOnly && item.walletRecordId) {
+                          const allWallets = Object.values(allPersonalWallets || {}).flat().filter(Boolean);
+                          const walletRecord = item.recordedIn === '共用錢包'
+                            ? (Array.isArray(sharedWallet) ? sharedWallet : []).find(w => w.id === item.walletRecordId)
+                            : allWallets.find(w => w.id === item.walletRecordId);
+                          if (walletRecord) {
+                            displayAmt = walletRecord.amount;
+                            displayCur = walletRecord.currency;
+                          }
+                        }
+                        return (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                              {isMarkOnly ? '✓ ' : ''}計入 {item.recordedIn.replace('已計入', '')}
+                            </span>
+                            {!isMarkOnly && displayAmt && displayAmt !== '0' && (
+                              <CurrencyBadge amount={displayAmt} currency={displayCur} type="支出" />
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })()}
@@ -2965,6 +3000,17 @@ const WalletTab = ({ onDownload }) => {
               : s
           ));
         }
+        // 同時清掉相關的 splitRecords 和 proxy
+        setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.id));
+        setAllPersonalWallets(prev => {
+          const next = { ...prev };
+          Object.keys(next).forEach(memberId => {
+            if (Array.isArray(next[memberId])) {
+              next[memberId] = next[memberId].filter(w => w.walletItemId !== item.id);
+            }
+          });
+          return next;
+        });
       }
     }});
   };
@@ -3241,6 +3287,27 @@ const WalletTab = ({ onDownload }) => {
           <FormField label="幣別" type="select" options={['JPY', 'KRW', 'TWD']} value={modal.data?.currency} onChange={v => setModal({ ...modal, data: { ...modal.data, currency: v } })} />
         </div>
 
+        {/* 金額 — 個人記帳（移到分攤前）*/}
+        {subTab === '個人記帳' && (
+          <>
+            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
+              <div className="flex-1">
+                <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
+                <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
+              </div>
+              <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
+            </div>
+            {isCalcOpen && (
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
+                  <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
+                ))}
+                <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
+              </div>
+            )}
+          </>
+        )}
+
         {/* 分攤設定 — 個人記帳 */}
         {subTab === '個人記帳' && (
           <div className="mb-3 bg-violet-50 rounded-2xl p-3 border border-violet-100">
@@ -3322,6 +3389,22 @@ const WalletTab = ({ onDownload }) => {
           </div>
         )}
 
+        <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
+          <div className="flex-1">
+            <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
+            <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
+          </div>
+          <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
+        </div>
+        {isCalcOpen && (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
+              <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
+            ))}
+            <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
+          </div>
+        )}
+
         {/* 共用錢包：選角色 + 自訂金額 */}
         {subTab === '共用錢包' && (() => {
           const isIn = modal.data?.type === '存入';
@@ -3356,7 +3439,7 @@ const WalletTab = ({ onDownload }) => {
                   );
                 })}
               </div>
-              {ids.length > 0 && totalAmt > 0 && (
+              {ids.length > 0 && (
                 <div className="space-y-2 mt-1">
                   <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">自訂金額（不填則平分）</p>
                   {ids.map(id => {
@@ -3388,22 +3471,6 @@ const WalletTab = ({ onDownload }) => {
             </div>
           );
         })()}
-        <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
-          <div className="flex-1">
-            <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
-            <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
-          </div>
-          <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
-        </div>
-        {isCalcOpen && (
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
-              <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
-            ))}
-            {/* 陣列防護加強：轉為 String 避免 slice 報錯 */}
-            <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
-          </div>
-        )}
         <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => { setModal({ ...modal, data: { ...modal.data, note: v } }); setWalletError(null); }} placeholder="輸入心得或詳情" />
 
         {walletError && (
@@ -3881,8 +3948,8 @@ const WalletTab = ({ onDownload }) => {
         );
       })() : null}
 
-      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} />
-      <ConfirmDialog isOpen={!!dateConfirmDel} onClose={() => setDateConfirmDel(null)} onConfirm={() => dateConfirmDel?.fn()} title="確認刪除日期與帳目" message="此操作將會刪除該日期頁籤，並且清空底下所有的帳務紀錄，確定要刪除嗎？" />
+      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => { confirmDel?.fn(); setConfirmDel(null); }} />
+      <ConfirmDialog isOpen={!!dateConfirmDel} onClose={() => setDateConfirmDel(null)} onConfirm={() => { dateConfirmDel?.fn(); setDateConfirmDel(null); }} title="確認刪除日期與帳目" message="此操作將會刪除該日期頁籤，並且清空底下所有的帳務紀錄，確定要刪除嗎？" />
     </div>
   );
 };
