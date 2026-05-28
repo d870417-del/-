@@ -2743,7 +2743,7 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-black text-slate-800">公費結算</h3>
-              <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}</p>
+              <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}・<span className={updatedAt === '使用預設匯率' ? 'text-amber-400' : 'text-emerald-400'}>{updatedAt}</span></p>
             </div>
             <button onClick={onClose} className="p-2 bg-slate-100 rounded-full text-slate-500"><X size={18} /></button>
           </div>
@@ -4023,7 +4023,7 @@ const WalletTab = ({ onDownload }) => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-lg font-black text-slate-800">分攤結算</h3>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}</p>
+                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}・<span className={updatedAt === '使用預設匯率' ? 'text-amber-400' : 'text-emerald-400'}>{updatedAt}</span></p>
                   </div>
                   <button onClick={() => setShowSettlement(false)} className="p-2 bg-slate-100 rounded-full text-slate-500"><X size={18} /></button>
                 </div>
