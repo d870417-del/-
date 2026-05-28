@@ -3768,10 +3768,16 @@ const WalletTab = ({ onDownload }) => {
           const totalAmt = Number(w.amount) || 0;
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds.length > 0 ? Math.round((totalAmt - filledSum) / unfilledIds.length) : 0;
-          ids.forEach(id => {
+          const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
+          let distributed = filledSum;
+          ids.forEach((id, idx) => {
             if (!memberBalance[id]) return;
-            const amt = Number(customAmts[id]) || perUnfilled;
+            let amt = Number(customAmts[id]) || perUnfilled;
+            // 最後一個未填自訂的人補足差額
+            if (!customAmts[id] && idx === ids.length - 1) {
+              amt = totalAmt - distributed;
+            }
+            if (!customAmts[id]) distributed += amt;
             memberBalance[id][w.currency] += amt;
           });
         });
@@ -3783,10 +3789,15 @@ const WalletTab = ({ onDownload }) => {
           const totalAmt = Number(w.amount) || 0;
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds.length > 0 ? Math.round((totalAmt - filledSum) / unfilledIds.length) : 0;
-          ids.forEach(id => {
+          const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
+          let distributed = filledSum;
+          ids.forEach((id, idx) => {
             if (!memberBalance[id]) return;
-            const amt = Number(customAmts[id]) || perUnfilled;
+            let amt = Number(customAmts[id]) || perUnfilled;
+            if (!customAmts[id] && idx === ids.length - 1) {
+              amt = totalAmt - distributed;
+            }
+            if (!customAmts[id]) distributed += amt;
             memberBalance[id][w.currency] -= amt;
           });
         });
