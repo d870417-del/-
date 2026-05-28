@@ -662,7 +662,7 @@ const HomePage = ({ onNavigate }) => {
 };
 
 // ─── TripPage ─────────────────────────────────────────────────────────────────
-const TripPage = ({ onDownload }) => {
+const TripPage = ({ onDownload, onNavigateToFood }) => {
   const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember, allMembers } = useMember();
   const [selectedDate, setSelectedDate] = useState(() => getSmartDate(tripDates));
   const [viewMode, setViewMode] = useState('list');
@@ -859,10 +859,18 @@ const TripPage = ({ onDownload }) => {
                           <span>{editor.name} 編輯</span>
                         </div>
                       </div>
-                      {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
-                        <Navigation size={20} />
-                        <span className="text-[10px] font-bold mt-0.5">MAP</span>
-                      </a>}
+                      {item.category === '美食' ? (
+                        <button onClick={() => onNavigateToFood && onNavigateToFood(item.id)}
+                          className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex flex-col items-center justify-center hover:bg-orange-100 active:scale-90 border border-orange-100 shrink-0 transition-colors">
+                          <span className="text-xl leading-none">🍽️</span>
+                          <span className="text-[9px] font-bold mt-0.5">詳情</span>
+                        </button>
+                      ) : item.mapUrl ? (
+                        <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
+                          <Navigation size={20} />
+                          <span className="text-[10px] font-bold mt-0.5">MAP</span>
+                        </a>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -919,7 +927,7 @@ const TripPage = ({ onDownload }) => {
 };
 
 // ─── FoodPage ─────────────────────────────────────────────────────────────────
-const FoodPage = ({ onDownload }) => {
+const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
   const { globalItinerary, setGlobalItinerary, tripDates, currentMember, allMembers, foodOptions, setFoodOptions } = useMember();
 
   // ── foodOptions 安全取值（全部從 Firebase 讀，所有項目都能增刪改）──
@@ -941,6 +949,19 @@ const FoodPage = ({ onDownload }) => {
   const [confirmDel, setConfirmDel] = useState(null);
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const [expandedId, setExpandedId] = useState(null);
+
+  // highlight 跳轉：自動展開對應卡片
+  useEffect(() => {
+    if (highlightId) {
+      setExpandedId(highlightId);
+      onClearHighlight && onClearHighlight();
+      setTimeout(() => {
+        const el = document.getElementById(`food-item-${highlightId}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
+    }
+  }, [highlightId]);
 
   // ── 自訂欄位狀態 ──
   const [customCity, setCustomCity] = useState('');
@@ -991,7 +1012,7 @@ const FoodPage = ({ onDownload }) => {
   useEffect(() => {
     if (typeof onDownload === 'function') {
       onDownload(() => () => {
-        let text = `🍜 美食清單 (${selectedCity}${selectedDistricts.length ? ' / ' + selectedDistricts.join('、') : ''} / ${selectedFoodType})\n${'='.repeat(50)}\n\n`;
+        let text = `🍽️ 美食清單 (${selectedCity}${selectedDistricts.length ? ' / ' + selectedDistricts.join('、') : ''} / ${selectedFoodType})\n${'='.repeat(50)}\n\n`;
         filteredFoodList.forEach((i, idx) => {
           const districts = (i.districts || []).join('、') || i.district || '未填';
           text += `${idx + 1}. 【${i.name}】\n   城市: ${i.city || '未填'} | 地區: ${districts}\n   類別: ${i.foodType || '未填'} | 日期: ${i.date || '待安排'} ${i.time || ''}\n`;
@@ -1295,7 +1316,8 @@ const FoodPage = ({ onDownload }) => {
             const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '同行隊友', avatarColor: '#94a3b8' };
             const districts = (item.districts || (item.district ? [item.district] : []));
             return (
-              <div key={item.id} className="bg-white border border-slate-100 rounded-[2rem] p-5 shadow-sm hover:shadow-md transition-all">
+              <div key={item.id} id={`food-item-${item.id}`}
+                className={`bg-white border rounded-[2rem] p-5 shadow-sm hover:shadow-md transition-all ${expandedId === item.id ? 'border-orange-300 shadow-orange-100' : 'border-slate-100'}`}>
                 {/* 右上按鈕 */}
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex flex-wrap gap-1.5 flex-1">
@@ -4367,6 +4389,7 @@ const AuthScreen = () => {
 const MainLayout = () => {
   const { currentMember, logout, allMembers, setAllMembers, updateMember } = useMember();
   const [activeTab, setActiveTab] = useState('home');
+  const [foodHighlightId, setFoodHighlightId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const downloadTriggerRef = useRef(null);
@@ -4428,8 +4451,8 @@ const MainLayout = () => {
 
       <div className="flex-1 overflow-y-auto relative no-scrollbar bg-slate-50">
         {activeTab === 'home' && <HomePage onNavigate={setActiveTab} />}
-        {activeTab === 'trip' && <TripPage onDownload={setDownloadTrigger} />}
-        {activeTab === 'food' && <FoodPage onDownload={setDownloadTrigger} />}
+        {activeTab === 'trip' && <TripPage onDownload={setDownloadTrigger} onNavigateToFood={(id) => { setFoodHighlightId(id); setActiveTab('food'); }} />}
+        {activeTab === 'food' && <FoodPage onDownload={setDownloadTrigger} highlightId={foodHighlightId} onClearHighlight={() => setFoodHighlightId(null)} />}
         {activeTab === 'shopping' && <ShoppingPage onDownload={setDownloadTrigger} />}
         {activeTab === 'list' && <ListTab onDownload={setDownloadTrigger} />}
         {activeTab === 'wallet' && <WalletTab onDownload={setDownloadTrigger} />}
