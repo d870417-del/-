@@ -3648,7 +3648,12 @@ const WalletTab = ({ onDownload }) => {
           else setActiveWallet(p => [...(Array.isArray(p) ? p : []), { ...finalData, id: walletItemId }]);
 
           // 新分攤邏輯：splitMembers 有人才產生記錄
-          if ((modal.data.splitMembers || []).length > 0 && modal.data.amount) {
+          // 編輯時，如果所有相關 splitRecords 都已結清，跳過重建
+          const existingRecords = (Array.isArray(splitRecords) ? splitRecords : [])
+            .filter(r => String(r.walletItemId) === String(walletItemId));
+          const allExistingSettled = existingRecords.length > 0 && existingRecords.every(r => r.isSettled);
+
+          if ((modal.data.splitMembers || []).length > 0 && modal.data.amount && !allExistingSettled) {
             const splitMembers = modal.data.splitMembers;
             const selfIncluded = modal.data.splitIncludeSelf !== false;
             const totalAmt = Number(modal.data.amount) || 0;
