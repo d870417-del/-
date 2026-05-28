@@ -3775,6 +3775,7 @@ const WalletTab = ({ onDownload }) => {
 
       {/* ── 公費結算彈跳視窗 ── */}
       {showPoolSettlement ? (() => {
+        try {
         const wallet = Array.isArray(sharedWallet) ? sharedWallet : [];
         const allMemberIds = (allMembers || []).map(m => m.id);
         const memberCount = allMemberIds.length || 1;
@@ -3911,6 +3912,18 @@ const WalletTab = ({ onDownload }) => {
             onSettle={handlePoolSettle}
           />
         );
+        } catch(e) {
+          console.error('PoolSettlement error:', e);
+          return (
+            <div className="fixed inset-0 z-[300] flex items-center justify-center p-8 bg-slate-900/50">
+              <div className="bg-white rounded-3xl p-6 text-center">
+                <p className="text-red-500 font-bold mb-2">載入失敗</p>
+                <p className="text-xs text-slate-400 mb-4">{e.message}</p>
+                <button onClick={() => setShowPoolSettlement(false)} className="px-4 py-2 bg-slate-100 rounded-xl text-sm font-bold">關閉</button>
+              </div>
+            </div>
+          );
+        }
       })() : null}
 
       {/* ── 全員代墊結算彈跳視窗 ── */}
