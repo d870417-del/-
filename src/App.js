@@ -3626,7 +3626,7 @@ const WalletTab = ({ onDownload }) => {
           };
           const cleanData = Object.fromEntries(
             Object.entries(rawData)
-              .filter(([k, v]) => v !== undefined && k !== 'splitMembers' && k !== 'splitIncludeSelf')
+              .filter(([k, v]) => v !== undefined && k !== 'splitMembers' && k !== 'splitIncludeSelf' && k !== 'selfAmount')
               .map(([k, v]) => [k, Array.isArray(v) ? v.filter(x => x !== undefined) : v])
           );
           // 保留 sharedCustomAmts
@@ -3649,8 +3649,9 @@ const WalletTab = ({ onDownload }) => {
             const splitMembers = modal.data.splitMembers;
             const selfIncluded = modal.data.splitIncludeSelf !== false;
             const totalAmt = Number(modal.data.amount) || 0;
-            const selfHasCustom = modal.data.selfAmount !== '' && modal.data.selfAmount !== undefined && modal.data.selfAmount !== null && !isNaN(Number(modal.data.selfAmount));
-            const selfCustomAmt = selfHasCustom ? Number(modal.data.selfAmount) : 0;
+            const selfAmtRaw = modal.data.selfAmount;
+            const selfHasCustom = selfAmtRaw !== '' && selfAmtRaw !== undefined && selfAmtRaw !== null && !isNaN(Number(selfAmtRaw)) && Number(selfAmtRaw) > 0;
+            const selfCustomAmt = selfHasCustom ? Number(selfAmtRaw) : 0;
             const filledSum = splitMembers.reduce((s, m) => s + (Number(m.amount) || 0), 0);
             const filledSumWithSelf = filledSum + (selfHasCustom ? selfCustomAmt : 0);
             const unfilledOthers = splitMembers.filter(m => !m.amount).length;
