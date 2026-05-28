@@ -3769,15 +3769,22 @@ const WalletTab = ({ onDownload }) => {
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
           const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
+          const unfilledIdxList = ids.map((id, i) => !customAmts[id] ? i : -1).filter(i => i >= 0);
+          const rotateIdx = unfilledIdxList.length > 0
+            ? unfilledIdxList[Math.abs((Number(w.id) || 0) % unfilledIdxList.length)]
+            : -1;
           let distributed = filledSum;
+          let unfilledDistributed = 0;
           ids.forEach((id, idx) => {
             if (!memberBalance[id]) return;
             let amt = Number(customAmts[id]) || perUnfilled;
-            // 最後一個未填自訂的人補足差額
-            if (!customAmts[id] && idx === ids.length - 1) {
-              amt = totalAmt - distributed;
+            if (!customAmts[id]) {
+              if (idx === rotateIdx) {
+                amt = totalAmt - distributed - (unfilledIdxList.length - 1) * perUnfilled + unfilledDistributed;
+              }
+              unfilledDistributed += perUnfilled;
             }
-            if (!customAmts[id]) distributed += amt;
+            distributed += Number(customAmts[id]) ? amt : 0;
             memberBalance[id][w.currency] += amt;
           });
         });
@@ -3790,14 +3797,22 @@ const WalletTab = ({ onDownload }) => {
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
           const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
-          let distributed = filledSum;
+          const unfilledIdxList2 = ids.map((id, i) => !customAmts[id] ? i : -1).filter(i => i >= 0);
+          const rotateIdx2 = unfilledIdxList2.length > 0
+            ? unfilledIdxList2[Math.abs((Number(w.id) || 0) % unfilledIdxList2.length)]
+            : -1;
+          let distributed2 = filledSum;
+          let unfilledDistributed2 = 0;
           ids.forEach((id, idx) => {
             if (!memberBalance[id]) return;
             let amt = Number(customAmts[id]) || perUnfilled;
-            if (!customAmts[id] && idx === ids.length - 1) {
-              amt = totalAmt - distributed;
+            if (!customAmts[id]) {
+              if (idx === rotateIdx2) {
+                amt = totalAmt - distributed2 - (unfilledIdxList2.length - 1) * perUnfilled + unfilledDistributed2;
+              }
+              unfilledDistributed2 += perUnfilled;
             }
-            if (!customAmts[id]) distributed += amt;
+            distributed2 += Number(customAmts[id]) ? amt : 0;
             memberBalance[id][w.currency] -= amt;
           });
         });
