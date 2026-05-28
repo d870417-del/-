@@ -3088,6 +3088,7 @@ const WalletTab = ({ onDownload }) => {
         date: dateForInput,
         splitMembers: [],
         splitIncludeSelf: true,
+        selfAmount: '',
         sharedCustomAmts: {},
         contributorIds: subTab === '共用錢包' ? allMemberIds : [currentMember?.id],
         forMemberIds: subTab === '共用錢包' ? allMemberIds : [],
@@ -3613,7 +3614,9 @@ const WalletTab = ({ onDownload }) => {
             }
           }
 
-          const formattedDate = modal.data.date.includes('-') ? modal.data.date.split('-').slice(1).join('/') : modal.data.date;
+          const rawDate = modal.data?.date || '';
+          const formattedDate = rawDate.includes('-') ? rawDate.split('-').slice(1).join('/') : rawDate;
+          if (!formattedDate) { alert('請填寫日期'); return; }
 
           const allMemberIds = (allMembers || []).map(m => m.id);
           const rawData = {
@@ -3681,12 +3684,13 @@ const WalletTab = ({ onDownload }) => {
 
             const newRecords = splitMembers.map((entry, idx) => {
               const memberAmt = Number(entry.amount) || perUnfilled;
+              const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
               return {
                 id: now + idx + 100,
                 walletItemId,
                 payerId: currentMember?.id,
                 receiverId: entry.id,
-                amount: memberAmt,
+                amount: memberAmtSafe,
                 currency: modal.data.currency || 'TWD',
                 note: modal.data.name || '',
                 createdAt: now,
@@ -3708,13 +3712,14 @@ const WalletTab = ({ onDownload }) => {
               splitMembers.forEach((entry, idx) => {
                 const memberId = entry.id;
                 if (deletedReceiverIds.has(memberId)) return;
-                const memberAmt = Number(entry.amount) || Math.round(totalAmt / count);
+                const memberAmt = Number(entry.amount) || perUnfilled || Math.round(totalAmt / count);
+                const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
                 const proxyRecord = {
                   id: now + idx + 200,
                   walletItemId,
                   name: cleanData.name,
                   type: '支出',
-                  amount: memberAmt,
+                  amount: memberAmtSafe || memberAmt,
                   currency: cleanData.currency,
                   date: formattedDate,
                   note: cleanData.note || '',
@@ -3736,7 +3741,8 @@ const WalletTab = ({ onDownload }) => {
           if (!(Array.isArray(walletDates) ? walletDates : []).includes(formattedDate)) {
             setWalletDates(prev => [...(Array.isArray(prev) ? prev : []), formattedDate].sort());
           }
-          setSelectedDate(formattedDate); setModal({ type: null }); setIsCalcOpen(false);
+          if (formattedDate) setSelectedDate(formattedDate);
+          setModal({ type: null }); setIsCalcOpen(false);
         }} className="w-full bg-violet-500 text-white font-black py-4 rounded-2xl shadow-md mt-1 active:scale-95 text-base hover:bg-violet-600 transition-colors">確認儲存</button>
       </Modal>
 
