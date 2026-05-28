@@ -3028,6 +3028,20 @@ const WalletTab = ({ onDownload }) => {
             return r;
           }));
         }
+        // 刪帳務後，如果那天已無帳務，自動移除日期 Tab
+        const itemDate = item.date;
+        if (itemDate) {
+          setTimeout(() => {
+            setWalletDates(prev => {
+              const remaining = (Array.isArray(activeWallet) ? activeWallet : []).filter(w => w.id !== item.id && w.date === itemDate);
+              if (remaining.length === 0) {
+                return (Array.isArray(prev) ? prev : []).filter(d => d !== itemDate);
+              }
+              return prev;
+            });
+          }, 200);
+        }
+
         // 不管共用或個人，只要有連動購物清單就還原
         const itemId = String(item.id);
         const shoppingItemId = item.shoppingItemId || item.shoppingListItemId;
@@ -3343,7 +3357,17 @@ const WalletTab = ({ onDownload }) => {
         <div className="grid grid-cols-2 gap-3 mb-3">
           <div>
             <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">日期</label>
-            <input type="date" value={modal.data?.date?.includes('/') ? `2026-${modal.data.date.replace('/', '-')}` : modal.data?.date || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, date: e.target.value } })} className="w-full bg-white border border-slate-200 rounded-2xl h-12 px-3 font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-violet-100 transition-all shadow-sm" />
+            <input type="date" value={(() => {
+              const d = modal.data?.date || '';
+              if (!d) return '';
+              if (d.includes('-') && d.startsWith('2')) return d; // yyyy-mm-dd
+              if (d.includes('/')) {
+                const parts = d.split('/');
+                if (parts.length === 2) return `2026-${parts[0]}-${parts[1]}`; // mm/dd
+                if (parts.length === 3) return `${parts[0]}-${parts[1]}-${parts[2]}`; // yyyy/mm/dd
+              }
+              return d;
+            })()} onChange={e => setModal({ ...modal, data: { ...modal.data, date: e.target.value } })} className="w-full bg-white border border-slate-200 rounded-2xl h-12 px-3 font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-violet-100 transition-all shadow-sm" />
           </div>
           <FormField label="幣別" type="select" options={['JPY', 'KRW', 'TWD']} value={modal.data?.currency} onChange={v => setModal({ ...modal, data: { ...modal.data, currency: v } })} />
         </div>
@@ -3409,9 +3433,9 @@ const WalletTab = ({ onDownload }) => {
               const filledSumWithSelf = filledSum + (selfHasCustom ? selfCustomAmt : 0);
               const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
               const remaining = Math.max(0, totalAmt - filledSumWithSelf);
-              const perUnfilled = unfilledCount > 0 ? Math.floor(remaining / unfilledCount) : 0;
+              const perUnfilled = unfilledCount > 0 ? Math.round((remaining / unfilledCount) * 10) / 10 : 0;
               const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled) : 0;
-              const actualTotal = filledSumWithSelf + (selfIncluded && !selfHasCustom ? perUnfilled : 0) + unfilledOthers * perUnfilled;
+              const actualTotal = filledSumWithSelf + myAmt + unfilledOthers * perUnfilled;
               const isOver = actualTotal > totalAmt + 1;
               const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
               return (
@@ -3424,7 +3448,7 @@ const WalletTab = ({ onDownload }) => {
                         type="number"
                         value={modal.data?.selfAmount || ''}
                         onChange={e => setModal({ ...modal, data: { ...modal.data, selfAmount: e.target.value } })}
-                        placeholder={myAmt > 0 ? myAmt.toLocaleString() : '選填'}
+                        placeholder="選填"
                         className="w-24 text-right text-xs font-bold text-violet-600 bg-transparent outline-none border-b border-violet-200 pb-0.5"
                       />
                       <span className="text-[10px] text-slate-400">{modal.data?.currency}</span>
@@ -3632,13 +3656,15 @@ const WalletTab = ({ onDownload }) => {
             const unfilledOthers = splitMembers.filter(m => !m.amount).length;
             const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
             const remaining = Math.max(0, totalAmt - filledSumWithSelf);
-            const perUnfilled = unfilledCount > 0 ? Math.round(remaining / unfilledCount) : 0;
+            const perUnfilled = unfilledCount > 0 ? Math.round((remaining / unfilledCount) * 10) / 10 : 0;
             const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled) : 0;
             const savedItem = { ...cleanData, id: walletItemId };
 
-            // 如果是編輯，先清除舊的 splitRecords 和被分攤者的 wallet 記錄
+            // 如果是編輯，先清除舊的未結清 splitRecords（已結清的保留）
             if (modal.data.id) {
-              setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== modal.data.id));
+              setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r =>
+                r.walletItemId !== modal.data.id || r.isSettled
+              ));
               // 清除被分攤者 wallet 裡的舊代墊記錄
               setAllPersonalWallets(prev => {
                 const next = { ...prev };
@@ -3669,11 +3695,18 @@ const WalletTab = ({ onDownload }) => {
             });
             setSplitRecords(p => [...(Array.isArray(p) ? p : []), ...newRecords]);
 
-            // 同時寫一筆代墊記錄進被分攤者的 wallet（讓他們能看到卡片）
+            // 同時寫一筆代墊記錄進被分攤者的 wallet
+            // 跳過已 deletedByReceiver 的人（他刪了不要再加回來）
+            const deletedReceiverIds = new Set(
+              (Array.isArray(splitRecords) ? splitRecords : [])
+                .filter(r => String(r.walletItemId) === String(walletItemId) && r.deletedByReceiver)
+                .map(r => r.receiverId)
+            );
             setAllPersonalWallets(prev => {
               const next = { ...prev };
               splitMembers.forEach((entry, idx) => {
                 const memberId = entry.id;
+                if (deletedReceiverIds.has(memberId)) return;
                 const memberAmt = Number(entry.amount) || Math.round(totalAmt / count);
                 const proxyRecord = {
                   id: now + idx + 200,
@@ -3685,7 +3718,7 @@ const WalletTab = ({ onDownload }) => {
                   date: formattedDate,
                   note: cleanData.note || '',
                   editedById: currentMember?.id,
-                  isProxyRecord: true, // 標記這是代墊記錄，不計入總額
+                  isProxyRecord: true,
                   createdAt: now,
                 };
                 const cur = next[memberId] || [];
