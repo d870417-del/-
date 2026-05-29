@@ -2719,7 +2719,9 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
   // settledCurs: { [memberId]: Set of settled currencies }
   const [settledCurs, setSettledCurs] = useState({});
 
-  const isCurSettled = (memberId, cur) => !!(settledCurs[memberId]?.has(cur));
+  const isCurSettled = (memberId, cur) => {
+    try { return !!(settledCurs[memberId]?.has(cur)); } catch(e) { return false; }
+  };
 
   const handleSettle = (m, cur, amt) => {
     // 寫回共用錢包
@@ -2814,7 +2816,7 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
                       const amt = bal[cur];
                       const settled = isCurSettled(m.id, cur);
                       const isOwed = amt < 0;
-                      const c = currencyConfig[cur] || currencyConfig.TWD;
+                      const c = (currencyConfig || {})[cur] || (currencyConfig || {}).TWD || { bg: 'bg-slate-50', border: 'border-slate-200', badge: 'bg-slate-400', text: 'text-slate-600', textLight: 'text-slate-400' };
                       const curDetail = detailByCur[cur] || [];
                       const expandKey = `${m.id}-${cur}`;
                       const isCurExpanded = expandedId === expandKey;
@@ -2825,8 +2827,8 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
                           <div className="flex items-center gap-2 px-3 py-2.5">
                             <span className={`text-[10px] font-black px-2 py-0.5 rounded-full text-white ${c.badge}`}>{cur}</span>
                             <span className={`text-sm font-black flex-1 ${settled ? 'text-emerald-400 line-through' : amt >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {amt >= 0 ? '+' : ''}{SYM[cur]}{Math.abs(amt).toLocaleString()}
-                              <span className="text-[10px] text-slate-400 font-bold ml-1 no-underline" style={{textDecoration:'none'}}>≈ NT${toTWD(Math.abs(amt), cur).toLocaleString()}</span>
+                              {amt >= 0 ? '+' : ''}{(SYM || {})[cur] || ''}{Math.abs(amt || 0).toLocaleString()}
+                              <span className="text-[10px] text-slate-400 font-bold ml-1 no-underline" style={{textDecoration:'none'}}>≈ NT${toTWD ? toTWD(Math.abs(amt || 0), cur).toLocaleString() : ''}</span>
                             </span>
                             {curDetail.length > 0 && (
                               <button onClick={() => setExpandedId(isCurExpanded ? null : expandKey)}
