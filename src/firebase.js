@@ -1,10 +1,7 @@
-// 1. 這裡原本就有
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
-// 💡 新增這一行：引入 Firestore 資料庫功能
-import { getFirestore } from "firebase/firestore"; 
+import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore";
 
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyAyWPYURhMqYRvZrS7BkY3vOaQNczoSp6U",
   authDomain: "busan-tokyo-travel.firebaseapp.com",
@@ -15,10 +12,19 @@ const firebaseConfig = {
   measurementId: "G-YFS5Q2Z66C"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
-
-// 💡 新增這兩行：初始化 Firestore 並將 db 導出
 const db = getFirestore(app);
+
+// 開啟離線快取，沒網路時從本地讀資料
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code === 'failed-precondition') {
+    // 多個分頁同時開啟時只有一個能啟用
+    console.warn('Firebase 離線快取：多個分頁開啟，僅部分支援');
+  } else if (err.code === 'unimplemented') {
+    // 瀏覽器不支援
+    console.warn('Firebase 離線快取：此瀏覽器不支援');
+  }
+});
+
 export { db };
