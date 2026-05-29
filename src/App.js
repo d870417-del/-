@@ -2714,7 +2714,7 @@ const simplifyDebts = (records, members, rates) => {
 };
 
 // ─── 公費結算視窗元件 ─────────────────────────────────────────────────────────
-const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, balance, getMemberDetail, rates, toTWD, SYM, currencyConfig, onClose, onSettle }) => {
+const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, balance, getMemberDetail, rates, toTWD, SYM, currencyConfig, onClose, onSettle, updatedAt }) => {
   const [expandedId, setExpandedId] = useState(null);
   // settledCurs: { [memberId]: Set of settled currencies }
   const [settledCurs, setSettledCurs] = useState({});
@@ -3912,6 +3912,7 @@ const WalletTab = ({ onDownload }) => {
             currencyConfig={currencyConfig}
             onClose={() => setShowPoolSettlement(false)}
             onSettle={handlePoolSettle}
+            updatedAt={updatedAt}
           />
         );
         } catch(e) {
