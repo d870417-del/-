@@ -9,7 +9,7 @@ import {
 import { db } from './firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
-const IS_DEV = true; // 🔧 測試時改 true，上線時改 false
+const IS_DEV = true;
 const appId = IS_DEV ? 'travel-pro-v42-DEV' : 'travel-pro-v42-final';
 
 // ─── 圖片自動壓縮工具（防止圖片過大撐爆 Firestore 1MB 限制） ───────────────────
@@ -4569,7 +4569,6 @@ const MainLayout = () => {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowSettings(true)} className="p-1.5 text-slate-400 hover:text-slate-700 active:scale-90 transition-colors"><Settings size={24} /></button>
-          <button onClick={() => setConfirmLogout(true)} className="p-1.5 text-slate-400 hover:text-red-500 active:scale-90 transition-colors"><LogOut size={24} /></button>
         </div>
       </header>
 
@@ -4657,6 +4656,11 @@ const MainLayout = () => {
             </div>
           </div>
         )}
+        <button onClick={() => { setShowSettings(false); setConfirmLogout(true); }}
+          className="w-full mt-4 py-3 bg-red-50 text-red-500 border border-red-200 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-red-100 active:scale-95 transition-all">
+          <LogOut size={16} />
+          登出
+        </button>
       </Modal>
 
       <ConfirmDialog isOpen={!!confirmDelMember} onClose={() => setConfirmDelMember(null)} onConfirm={() => confirmDelMember?.fn()} title={`刪除成員 ${confirmDelMember?.name}`} message="確定要將此成員從團隊中移除嗎？" />
