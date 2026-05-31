@@ -719,17 +719,20 @@ const TripPage = ({ onDownload, onNavigateToFood }) => {
         text += '---------------------------\n';
       });
       // CSV 格式，所有日期
-      const rows = [['日期', '時間', '名稱', '地點', '城市', '類別', '費用', '備註']];
-      const allItems = Array.isArray(globalItinerary) ? globalItinerary : [];
+      const rows = [['日期', '時間', '名稱', '地點', '城市', '類別', '備註']];
+      const allItems = Array.isArray(globalItinerary) ? [...globalItinerary].sort((a, b) => {
+        if ((a.date || '') < (b.date || '')) return -1;
+        if ((a.date || '') > (b.date || '')) return 1;
+        return (a.time || '').localeCompare(b.time || '');
+      }) : [];
       allItems.forEach(item => {
         rows.push([
-          (item.dates || []).join('・') || '',
+          item.date || '',
           item.time || '',
           item.name || '',
           item.location || '',
           item.city || '',
           item.category || '',
-          item.cost || '',
           item.note || '',
         ]);
       });
@@ -4259,8 +4262,17 @@ const ListTab = ({ onDownload }) => {
   useEffect(() => {
     onDownload(() => () => {
       let text = `${subTab}\n\n`;
-      sortedTodos.forEach(i => { if (i) text += `[${i.status ? 'V' : ' '}] ${i.content}\n`; if (i?.note) text += `備註: ${i.note}\n`; text += '--\n'; });
-      downloadTextFile(text, `List_${subTab}`);
+      const rows = [['狀態', '項目', '備註']];
+      sortedTodos.forEach(i => {
+        if (!i) return;
+        rows.push([
+          i.status ? '已完成' : '未完成',
+          i.content || '',
+          i.note || '',
+        ]);
+      });
+      const label = subTab === '共用清單' ? '共用待辦' : '個人待辦';
+      downloadCSV(rows, `待辦_${label}_${new Date().toLocaleDateString('zh-TW')}`);
     });
   }, [sortedTodos, subTab, onDownload]);
 
@@ -4371,8 +4383,14 @@ const NotesTab = ({ onDownload }) => {
   useEffect(() => {
     onDownload(() => () => {
       let text = `${subTab}\n\n`;
-      sortedNotes.forEach(i => { if (i) text += `[${i.date}] ${i.content}\n--\n`; });
-      downloadTextFile(text, `Notes_${subTab}`);
+      // CSV 格式，只下載自己的記事
+      const rows = [['日期', '內容']];
+      sortedNotes.forEach(i => {
+        if (!i) return;
+        rows.push([i.date || '', i.content || '']);
+      });
+      const label = subTab === '共用記事' ? '共用記事' : '個人記事';
+      downloadCSV(rows, `記事_${label}_${new Date().toLocaleDateString('zh-TW')}`);
     });
   }, [sortedNotes, subTab, onDownload]);
 
