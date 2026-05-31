@@ -2972,9 +2972,6 @@ const WalletTab = ({ onDownload }) => {
   const [walletError, setWalletError] = useState(null);
   const { rates: autoRates, updatedAt } = useExchangeRates();
   const { customRates } = useMember();
-  const rates = { TWD: 1, JPY: (customRates?.JPY) || autoRates.JPY, KRW: (customRates?.KRW) || autoRates.KRW };
-  const { customRates, setCustomRates } = useMember();
-  // 優先用自訂匯率，否則用即時匯率
   const rates = { TWD: 1, JPY: customRates?.JPY || autoRates.JPY, KRW: customRates?.KRW || autoRates.KRW };
   const toTWD = useCallback((amount, currency) => Math.round(amount * (rates[currency] || 1)), [rates]);
   const SYM = { KRW: '₩', JPY: '¥', TWD: '$' };
