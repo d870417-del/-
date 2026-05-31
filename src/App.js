@@ -3369,7 +3369,7 @@ const WalletTab = ({ onDownload }) => {
           const c = currencyConfig[item.currency] || currencyConfig.TWD;
           const isIncome = item.type === '存入';
           // 存入=綠色，支出=紅色
-          const typeColor = isIncome ? 'text-emerald-600 border-emerald-200' : 'text-red-500 border-red-200';
+          const typeColor = isIncome ? 'text-blue-500 border-blue-200' : 'text-red-500 border-red-200';
           const isSettlementCard = !!item.isSettlement;
           const isProxyCard = !!item.isProxyRecord;
           const editor = (allMembers || []).find(m => m && m.id === item.editedById) || { name: item.lastEdited || '成員' };
@@ -3443,7 +3443,7 @@ const WalletTab = ({ onDownload }) => {
               <div className="pt-1 pr-14">
                 <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                   <span className={`${c.badge} text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm`}>{item.currency}</span>
-                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border bg-white ${isIncome ? 'text-emerald-600 border-emerald-200' : 'text-red-500 border-red-200'}`}>{item.type}</span>
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border bg-white ${isIncome ? 'text-blue-500 border-blue-200' : 'text-red-500 border-red-200'}`}>{item.type}</span>
                   {memberLabel && <span className="text-[10px] font-bold text-slate-500">{memberLabel}</span>}
                   {isProxyCard && (
                     <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">不計入總額</span>
@@ -3477,7 +3477,7 @@ const WalletTab = ({ onDownload }) => {
               </div>
 
               <div className="flex justify-end items-center gap-1.5 mt-2">
-                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-emerald-600' : 'text-red-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
+                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-blue-500' : 'text-red-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
                 {isIncome ? <TrendingUp size={22} className="text-red-400 opacity-80" /> : <TrendingDown size={22} className="text-blue-300 opacity-80" />}
               </div>
             </div>
@@ -4630,13 +4630,13 @@ const MainLayout = () => {
     }
 
     // 打包成 zip 下載
-    const today = new Date().toLocaleDateString('zh-TW').replace(/\//g, '-');
+    const todayForZip = new Date().toLocaleDateString('zh-TW').replace(/\//g, '-');
     const files = downloads.map(d => ({
       name: `${d.name}.csv`,
       content: rowsToCSV(d.rows),
     }));
     if (files.length > 0) {
-      downloadZip(files, `旅遊資料_${today}`);
+      downloadZip(files, `旅遊資料_${todayForZip}`);
     }
   };
 
