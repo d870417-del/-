@@ -435,6 +435,22 @@ const downloadTextFile = (content, filename) => {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 };
 
+const downloadCSV = (rows, filename) => {
+  // rows: [['表頭1', '表頭2', ...], ['資料1', '資料2', ...], ...]
+  const escape = v => {
+    const str = v === null || v === undefined ? '' : String(v);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+  const csv = '\uFEFF' + rows.map(row => row.map(escape).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `${filename}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+};
+
 const getSmartDate = (datesArray) => {
   if (!datesArray || datesArray.length === 0) return '待安排';
   const now = new Date();
@@ -702,7 +718,22 @@ const TripPage = ({ onDownload, onNavigateToFood }) => {
         if (i.mapUrl) text += `地圖: ${i.mapUrl}\n`;
         text += '---------------------------\n';
       });
-      downloadTextFile(text, `Trip_${selectedDate.replace('/', '-')}`);
+      // CSV 格式，所有日期
+      const rows = [['日期', '時間', '名稱', '地點', '城市', '類別', '費用', '備註']];
+      const allItems = Array.isArray(globalItinerary) ? globalItinerary : [];
+      allItems.forEach(item => {
+        rows.push([
+          (item.dates || []).join('・') || '',
+          item.time || '',
+          item.name || '',
+          item.location || '',
+          item.city || '',
+          item.category || '',
+          item.cost || '',
+          item.note || '',
+        ]);
+      });
+      downloadCSV(rows, `行程_${new Date().toLocaleDateString('zh-TW')}`);
     });
   }, [filteredItems, selectedDate, onDownload]);
 
@@ -1020,7 +1051,20 @@ const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
           if (i.note) text += `   備註: ${i.note}\n`;
           text += '-'.repeat(40) + '\n';
         });
-        downloadTextFile(text, `美食清單_${Date.now()}`);
+        const rows = [['名稱', '城市', '地區', '商場', '類型', '地圖', '備註']];
+        const allFood = Array.isArray(globalItinerary) ? globalItinerary.filter(i => i.category === '美食') : [];
+        allFood.forEach(item => {
+          rows.push([
+            item.name || '',
+            item.city || '',
+            item.district || '',
+            item.mall || '',
+            item.foodType || '',
+            (item.mapUrls || [item.mapUrl]).filter(Boolean).join('・'),
+            item.note || '',
+          ]);
+        });
+        downloadCSV(rows, `美食清單_${new Date().toLocaleDateString('zh-TW')}`);
       });
     }
   }, [filteredFoodList, selectedCity, selectedDistricts, selectedFoodType, onDownload]);
@@ -1761,7 +1805,25 @@ const ShoppingPage = ({ onDownload }) => {
         if (i.note) text += `備註: ${i.note}\n`;
         text += '--\n';
       });
-      downloadTextFile(text, `Shopping_${selectedCity}`);
+      const allItems = Array.isArray(shoppingList) ? shoppingList : [];
+      const rows = [['名稱', '城市', '商場', '地區', '許願者', '狀態', '購買日期', '價格', '幣別', '記入', '備註']];
+      allItems.forEach(item => {
+        const member = (allMembers || []).find(m => m.id === item.memberId);
+        rows.push([
+          item.name || '',
+          item.city || '',
+          item.mall || '',
+          item.location || '',
+          member?.name || '',
+          item.isBought ? '已買' : '未買',
+          item.boughtAt || '',
+          item.price || '',
+          item.currency || '',
+          item.recordedIn || '',
+          item.note || '',
+        ]);
+      });
+      downloadCSV(rows, `購物清單_${new Date().toLocaleDateString('zh-TW')}`);
     });
   }, [filteredList, selectedCity, selectedMemberId, allMembers, onDownload]);
 
@@ -2887,6 +2949,14 @@ const WalletTab = ({ onDownload }) => {
   const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shoppingList, setShoppingList } = useMember();
   const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
   const [subTab, setSubTab] = useState('共用錢包');
+  const handleSubTabChange = (tab) => {
+    setSubTab(tab);
+    // 切換 Tab 時重置選中日期到最後一天
+    setSelectedDate(() => {
+      const today = new Date();
+      return `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
+    });
+  };
   const [modal, setModal] = useState({ type: null, data: null });
   const [isCalcOpen, setIsCalcOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
@@ -3130,7 +3200,25 @@ const WalletTab = ({ onDownload }) => {
         if (!currentData || !currentData.filteredWalletItems) return;
         let text = `${currentData.subTab} - ${currentData.selectedDate}\n\n`;
         currentData.filteredWalletItems.forEach(i => { if (i) text += `[${i.type}] ${i.name} : ${i.currency} ${i.amount}\n`; if (i?.note) text += `備註: ${i.note}\n`; text += '--\n'; });
-        downloadTextFile(text, `Wallet_${currentData.subTab}_${currentData.selectedDate.replace('/', '-')}`);
+        const isShared = currentData.subTab === '共用錢包';
+        const wallet = isShared
+          ? (Array.isArray(sharedWallet) ? sharedWallet : [])
+          : (Array.isArray(personalWallet) ? personalWallet : []);
+        // 排除結清卡片（isSettlement）和 proxy 卡片（isProxyRecord）
+        const filteredWallet = wallet.filter(item => item && !item.isSettlement && !item.isProxyRecord);
+        const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
+        filteredWallet.forEach(item => {
+          rows.push([
+            item.date || '',
+            item.type || '',
+            item.name || '',
+            item.currency || '',
+            item.amount || '',
+            item.note || '',
+          ]);
+        });
+        const label = isShared ? '共用錢包' : '個人記帳';
+        downloadCSV(rows, `帳務_${label}_${new Date().toLocaleDateString('zh-TW')}`);
       });
     }
   }, [onDownload]);
@@ -3146,7 +3234,7 @@ const WalletTab = ({ onDownload }) => {
       <div className="px-4 pt-5 mb-4">
         <div className="flex bg-violet-50/50 p-1.5 rounded-[2rem] border border-violet-100 mb-5">
           {['共用錢包', '個人記帳'].map(t => (
-            <button key={t} type="button" onClick={() => setSubTab(t)} className={`flex-1 py-2.5 text-sm font-bold rounded-2xl transition-all ${subTab === t ? 'bg-violet-500 text-white shadow-md' : 'text-violet-400 hover:text-violet-600'}`}>{t}</button>
+            <button key={t} type="button" onClick={() => handleSubTabChange(t)} className={`flex-1 py-2.5 text-sm font-bold rounded-2xl transition-all ${subTab === t ? 'bg-violet-500 text-white shadow-md' : 'text-violet-400 hover:text-violet-600'}`}>{t}</button>
           ))}
         </div>
 
@@ -3247,6 +3335,8 @@ const WalletTab = ({ onDownload }) => {
           if (!item) return null;
           const c = currencyConfig[item.currency] || currencyConfig.TWD;
           const isIncome = item.type === '存入';
+          // 存入=綠色，支出=紅色
+          const typeColor = isIncome ? 'text-emerald-600 border-emerald-200' : 'text-red-500 border-red-200';
           const isSettlementCard = !!item.isSettlement;
           const isProxyCard = !!item.isProxyRecord;
           const editor = (allMembers || []).find(m => m && m.id === item.editedById) || { name: item.lastEdited || '成員' };
@@ -3320,7 +3410,7 @@ const WalletTab = ({ onDownload }) => {
               <div className="pt-1 pr-14">
                 <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                   <span className={`${c.badge} text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm`}>{item.currency}</span>
-                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border bg-white ${isIncome ? 'text-red-500 border-red-200' : 'text-blue-500 border-blue-200'}`}>{item.type}</span>
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border bg-white ${isIncome ? 'text-emerald-600 border-emerald-200' : 'text-red-500 border-red-200'}`}>{item.type}</span>
                   {memberLabel && <span className="text-[10px] font-bold text-slate-500">{memberLabel}</span>}
                   {isProxyCard && (
                     <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">不計入總額</span>
@@ -3354,7 +3444,7 @@ const WalletTab = ({ onDownload }) => {
               </div>
 
               <div className="flex justify-end items-center gap-1.5 mt-2">
-                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-red-500' : 'text-blue-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
+                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-emerald-600' : 'text-red-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
                 {isIncome ? <TrendingUp size={22} className="text-red-400 opacity-80" /> : <TrendingDown size={22} className="text-blue-300 opacity-80" />}
               </div>
             </div>
