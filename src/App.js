@@ -268,6 +268,7 @@ export function MemberProvider({ children }) {
   const [allPersonalWallets, setAllPersonalWallets] = useCloudState(`${appId}:allPersonalWallets`, {});
   const [allPersonalNotes, setAllPersonalNotes] = useCloudState(`${appId}:allPersonalNotes`, {});
   const [splitRecords, setSplitRecords] = useCloudState(`${appId}:splitRecords`, []);
+  const [customRates, setCustomRates] = useCloudState(`${appId}:customRates`, { JPY: 0.22, KRW: 0.022 });
 
   const personalWallet = currentMember ? (allPersonalWallets[currentMember.id] || []) : [];
   const setPersonalWallet = useCallback((valOrFn) => {
@@ -317,6 +318,7 @@ export function MemberProvider({ children }) {
     foodOptions, setFoodOptions,
     shopOptions, setShopOptions,
     splitRecords, setSplitRecords,
+    customRates, setCustomRates,
   };
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
@@ -2710,7 +2712,7 @@ const useExchangeRates = () => {
       })
       .catch(() => setUpdatedAt('使用預設匯率'));
   }, []);
-  return { rates, setRates, updatedAt };
+  return { rates, updatedAt };
 };
 
 // ─── 債務簡化算法（按幣別分開）─────────────────────────────────────────────────
@@ -2968,7 +2970,12 @@ const WalletTab = ({ onDownload }) => {
   const [showPoolSettlement, setShowPoolSettlement] = useState(false);
   const [transferStates, setTransferStates] = useState({});
   const [walletError, setWalletError] = useState(null);
-  const { rates, setRates, updatedAt } = useExchangeRates();
+  const { rates: autoRates, updatedAt } = useExchangeRates();
+  const { customRates } = useMember();
+  const rates = { TWD: 1, JPY: (customRates?.JPY) || autoRates.JPY, KRW: (customRates?.KRW) || autoRates.KRW };
+  const { customRates, setCustomRates } = useMember();
+  // 優先用自訂匯率，否則用即時匯率
+  const rates = { TWD: 1, JPY: customRates?.JPY || autoRates.JPY, KRW: customRates?.KRW || autoRates.KRW };
   const toTWD = useCallback((amount, currency) => Math.round(amount * (rates[currency] || 1)), [rates]);
   const SYM = { KRW: '₩', JPY: '¥', TWD: '$' };
 
@@ -4514,6 +4521,10 @@ const MainLayout = () => {
   const { currentMember, logout, allMembers, setAllMembers, updateMember,
     globalItinerary, sharedWallet, personalWallet, sharedNotes, personalNotes,
     allPersonalNotes, shoppingList, sharedTodos } = useMember();
+  const { rates: autoRates, updatedAt } = useExchangeRates();
+  const { customRates, setCustomRates } = useMember();
+  // 優先用自訂匯率，否則用即時匯率
+  const rates = { TWD: 1, JPY: customRates?.JPY || autoRates.JPY, KRW: customRates?.KRW || autoRates.KRW };
   const [activeTab, setActiveTab] = useState('home');
   const [foodHighlightId, setFoodHighlightId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -4738,7 +4749,7 @@ const MainLayout = () => {
                   type="number"
                   step="0.001"
                   value={rates[cur]}
-                  onChange={e => setRates(prev => ({ ...prev, [cur]: parseFloat(e.target.value) || prev[cur] }))}
+                  onChange={e => setCustomRates(prev => ({ ...prev, [cur]: parseFloat(e.target.value) || prev[cur] }))}
                   className="flex-1 text-sm font-bold text-violet-600 bg-transparent outline-none"
                 />
               </div>
