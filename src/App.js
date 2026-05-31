@@ -2710,7 +2710,7 @@ const useExchangeRates = () => {
       })
       .catch(() => setUpdatedAt('使用預設匯率'));
   }, []);
-  return { rates, updatedAt };
+  return { rates, setRates, updatedAt };
 };
 
 // ─── 債務簡化算法（按幣別分開）─────────────────────────────────────────────────
@@ -2968,7 +2968,7 @@ const WalletTab = ({ onDownload }) => {
   const [showPoolSettlement, setShowPoolSettlement] = useState(false);
   const [transferStates, setTransferStates] = useState({});
   const [walletError, setWalletError] = useState(null);
-  const { rates, updatedAt } = useExchangeRates();
+  const { rates, setRates, updatedAt } = useExchangeRates();
   const toTWD = useCallback((amount, currency) => Math.round(amount * (rates[currency] || 1)), [rates]);
   const SYM = { KRW: '₩', JPY: '¥', TWD: '$' };
 
@@ -4511,7 +4511,9 @@ const AuthScreen = () => {
 
 // ─── MainLayout ───────────────────────────────────────────────────────────────
 const MainLayout = () => {
-  const { currentMember, logout, allMembers, setAllMembers, updateMember } = useMember();
+  const { currentMember, logout, allMembers, setAllMembers, updateMember,
+    globalItinerary, sharedWallet, personalWallet, sharedNotes, personalNotes,
+    allPersonalNotes, shoppingList, sharedTodos } = useMember();
   const [activeTab, setActiveTab] = useState('home');
   const [foodHighlightId, setFoodHighlightId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -4528,6 +4530,73 @@ const MainLayout = () => {
   const [newMemberName, setNewMemberName] = useState('');
   const [confirmDelMember, setConfirmDelMember] = useState(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [downloadChecks, setDownloadChecks] = useState({
+    trip: true, food: true, shopping: true,
+    sharedWallet: true, personalWallet: true,
+    sharedTodo: true, personalTodo: true,
+    sharedNotes: true, personalNotes: true,
+  });
+
+  const handleBatchDownload = () => {
+    const today = new Date().toLocaleDateString('zh-TW');
+    const myWallet = Array.isArray(personalWallet) ? personalWallet : [];
+    const myNotes = Array.isArray(personalNotes) ? personalNotes : [];
+
+    if (downloadChecks.trip) {
+      const rows = [['日期', '時間', '名稱', '地點', '城市', '類別', '備註']];
+      const items = Array.isArray(globalItinerary) ? [...globalItinerary].sort((a, b) => (a.date || '').localeCompare(b.date || '')) : [];
+      items.forEach(i => rows.push([i.date||'', i.time||'', i.name||'', i.location||'', i.city||'', i.category||'', i.note||'']));
+      downloadCSV(rows, `行程_${today}`);
+    }
+    if (downloadChecks.food) {
+      const rows = [['名稱', '城市', '地區', '商場', '類型', '備註']];
+      const items = Array.isArray(globalItinerary) ? globalItinerary.filter(i => i.category === '美食') : [];
+      items.forEach(i => rows.push([i.name||'', i.city||'', i.district||'', i.mall||'', i.foodType||'', i.note||'']));
+      downloadCSV(rows, `美食_${today}`);
+    }
+    if (downloadChecks.shopping) {
+      const rows = [['名稱', '城市', '商場', '許願者', '狀態', '購買日期', '價格', '幣別', '備註']];
+      const items = Array.isArray(shoppingList) ? shoppingList : [];
+      items.forEach(i => {
+        const member = (allMembers||[]).find(m => m.id === i.memberId);
+        rows.push([i.name||'', i.city||'', i.mall||'', member?.name||'', i.isBought?'已買':'未買', i.boughtAt||'', i.price||'', i.currency||'', i.note||'']);
+      });
+      downloadCSV(rows, `購物清單_${today}`);
+    }
+    if (downloadChecks.sharedWallet) {
+      const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
+      const items = (Array.isArray(sharedWallet) ? sharedWallet : []).filter(i => i && !i.isSettlement);
+      items.forEach(i => rows.push([i.date||'', i.type||'', i.name||'', i.currency||'', i.amount||'', i.note||'']));
+      downloadCSV(rows, `帳務_共用錢包_${today}`);
+    }
+    if (downloadChecks.personalWallet) {
+      const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
+      myWallet.filter(i => i && !i.isSettlement && !i.isProxyRecord).forEach(i => rows.push([i.date||'', i.type||'', i.name||'', i.currency||'', i.amount||'', i.note||'']));
+      downloadCSV(rows, `帳務_個人記帳_${today}`);
+    }
+    if (downloadChecks.sharedTodo) {
+      const rows = [['狀態', '項目', '備註']];
+      const items = Array.isArray(sharedTodos) ? sharedTodos : [];
+      items.forEach(i => rows.push([i.status?'已完成':'未完成', i.content||'', i.note||'']));
+      downloadCSV(rows, `待辦_共用_${today}`);
+    }
+    if (downloadChecks.personalTodo) {
+      const rows = [['狀態', '項目', '備註']];
+      // 個人待辦從各頁面的 data 取，這裡先跳過
+      downloadCSV(rows, `待辦_個人_${today}`);
+    }
+    if (downloadChecks.sharedNotes) {
+      const rows = [['日期', '內容']];
+      const items = Array.isArray(sharedNotes) ? sharedNotes : [];
+      items.forEach(i => rows.push([i.date||'', i.content||'']));
+      downloadCSV(rows, `記事_共用_${today}`);
+    }
+    if (downloadChecks.personalNotes) {
+      const rows = [['日期', '內容']];
+      myNotes.forEach(i => rows.push([i.date||'', i.content||'']));
+      downloadCSV(rows, `記事_個人_${today}`);
+    }
+  };
 
   const tabs = [
     { id: 'trip', label: '行程', icon: Map, color: 'text-blue-500', activeBg: 'bg-blue-500' },
@@ -4656,6 +4725,57 @@ const MainLayout = () => {
             </div>
           </div>
         )}
+        {/* 匯率設定 */}
+        <div className="mt-4 bg-slate-50 p-4 rounded-3xl border border-slate-100">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 block">💱 匯率設定（手動覆蓋）</label>
+          <div className="space-y-2">
+            {['JPY', 'KRW'].map(cur => (
+              <div key={cur} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2 border border-slate-200">
+                <span className="text-xs font-black text-slate-600 w-8">1 {cur}</span>
+                <span className="text-xs text-slate-400">=</span>
+                <span className="text-xs text-slate-400">NT$</span>
+                <input
+                  type="number"
+                  step="0.001"
+                  value={rates[cur]}
+                  onChange={e => setRates(prev => ({ ...prev, [cur]: parseFloat(e.target.value) || prev[cur] }))}
+                  className="flex-1 text-sm font-bold text-violet-600 bg-transparent outline-none"
+                />
+              </div>
+            ))}
+            <p className="text-[10px] text-slate-400 mt-1">{updatedAt}</p>
+          </div>
+        </div>
+
+        {/* 下載中心 */}
+        <div className="mt-4 bg-slate-50 p-4 rounded-3xl border border-slate-100">
+          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 block">⬇️ 下載中心</label>
+          <div className="space-y-2">
+            {[
+              { key: 'trip', label: '行程' },
+              { key: 'food', label: '美食' },
+              { key: 'shopping', label: '購物清單' },
+              { key: 'sharedWallet', label: '帳務 — 共用錢包' },
+              { key: 'personalWallet', label: '帳務 — 個人記帳' },
+              { key: 'sharedTodo', label: '待辦 — 共用' },
+              { key: 'personalTodo', label: '待辦 — 個人' },
+              { key: 'sharedNotes', label: '記事 — 共用' },
+              { key: 'personalNotes', label: '記事 — 個人' },
+            ].map(item => (
+              <label key={item.key} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-200 cursor-pointer hover:bg-slate-50">
+                <input type="checkbox" checked={downloadChecks[item.key]}
+                  onChange={e => setDownloadChecks(p => ({ ...p, [item.key]: e.target.checked }))}
+                  className="w-4 h-4 accent-violet-500" />
+                <span className="text-sm font-bold text-slate-700">{item.label}</span>
+              </label>
+            ))}
+            <button onClick={() => { handleBatchDownload(); setShowSettings(false); }}
+              className="w-full mt-2 py-3 bg-violet-500 text-white rounded-2xl font-bold text-sm active:scale-95 hover:bg-violet-600 transition-colors">
+              下載選取項目
+            </button>
+          </div>
+        </div>
+
         <button onClick={() => { setShowSettings(false); setConfirmLogout(true); }}
           className="w-full mt-4 py-3 bg-red-50 text-red-500 border border-red-200 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-red-100 active:scale-95 transition-all">
           <LogOut size={16} />
