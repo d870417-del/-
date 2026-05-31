@@ -437,20 +437,46 @@ const downloadTextFile = (content, filename) => {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 };
 
+const escapeCSV = v => {
+  const str = v === null || v === undefined ? '' : String(v);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+const rowsToCSV = (rows) => '\uFEFF' + rows.map(row => row.map(escapeCSV).join(',')).join('\n');
+
 const downloadCSV = (rows, filename) => {
-  // rows: [['表頭1', '表頭2', ...], ['資料1', '資料2', ...], ...]
-  const escape = v => {
-    const str = v === null || v === undefined ? '' : String(v);
-    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-      return `"${str.replace(/"/g, '""')}"`;
-    }
-    return str;
-  };
-  const csv = '\uFEFF' + rows.map(row => row.map(escape).join(',')).join('\n');
+  const csv = rowsToCSV(rows);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   a.download = `${filename}.csv`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
+};
+
+const downloadZip = async (files, zipName) => {
+  // files: [{ name: 'xxx.csv', content: '...' }, ...]
+  try {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    document.head.appendChild(script);
+    await new Promise((resolve, reject) => {
+      script.onload = resolve;
+      script.onerror = reject;
+    });
+    const zip = new window.JSZip();
+    files.forEach(f => zip.file(f.name, f.content));
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${zipName}.zip`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  } catch(e) {
+    console.error('zip error:', e);
+    // 失敗時改成分開下載
+    files.forEach((f, idx) => setTimeout(() => downloadCSV([], f.name.replace('.csv', '')), idx * 500));
+  }
 };
 
 const getSmartDate = (datesArray) => {
@@ -4550,17 +4576,20 @@ const MainLayout = () => {
     const myWallet = Array.isArray(personalWallet) ? personalWallet : [];
     const myNotes = Array.isArray(personalNotes) ? personalNotes : [];
 
+    // 收集所有要下載的檔案，然後依序延遲下載
+    const downloads = [];
+
     if (downloadChecks.trip) {
       const rows = [['日期', '時間', '名稱', '地點', '城市', '類別', '備註']];
       const items = Array.isArray(globalItinerary) ? [...globalItinerary].sort((a, b) => (a.date || '').localeCompare(b.date || '')) : [];
       items.forEach(i => rows.push([i.date||'', i.time||'', i.name||'', i.location||'', i.city||'', i.category||'', i.note||'']));
-      downloadCSV(rows, `行程_${today}`);
+      downloads.push({ rows, name: `行程_${today}` });
     }
     if (downloadChecks.food) {
       const rows = [['名稱', '城市', '地區', '商場', '類型', '備註']];
       const items = Array.isArray(globalItinerary) ? globalItinerary.filter(i => i.category === '美食') : [];
       items.forEach(i => rows.push([i.name||'', i.city||'', i.district||'', i.mall||'', i.foodType||'', i.note||'']));
-      downloadCSV(rows, `美食_${today}`);
+      downloads.push({ rows, name: `美食_${today}` });
     }
     if (downloadChecks.shopping) {
       const rows = [['名稱', '城市', '商場', '許願者', '狀態', '購買日期', '價格', '幣別', '備註']];
@@ -4569,40 +4598,45 @@ const MainLayout = () => {
         const member = (allMembers||[]).find(m => m.id === i.memberId);
         rows.push([i.name||'', i.city||'', i.mall||'', member?.name||'', i.isBought?'已買':'未買', i.boughtAt||'', i.price||'', i.currency||'', i.note||'']);
       });
-      downloadCSV(rows, `購物清單_${today}`);
+      downloads.push({ rows, name: `購物清單_${today}` });
     }
     if (downloadChecks.sharedWallet) {
       const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
       const items = (Array.isArray(sharedWallet) ? sharedWallet : []).filter(i => i && !i.isSettlement);
       items.forEach(i => rows.push([i.date||'', i.type||'', i.name||'', i.currency||'', i.amount||'', i.note||'']));
-      downloadCSV(rows, `帳務_共用錢包_${today}`);
+      downloads.push({ rows, name: `帳務_共用錢包_${today}` });
     }
     if (downloadChecks.personalWallet) {
       const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
       myWallet.filter(i => i && !i.isSettlement && !i.isProxyRecord).forEach(i => rows.push([i.date||'', i.type||'', i.name||'', i.currency||'', i.amount||'', i.note||'']));
-      downloadCSV(rows, `帳務_個人記帳_${today}`);
+      downloads.push({ rows, name: `帳務_個人記帳_${today}` });
     }
     if (downloadChecks.sharedTodo) {
       const rows = [['狀態', '項目', '備註']];
       const items = Array.isArray(sharedTodos) ? sharedTodos : [];
       items.forEach(i => rows.push([i.status?'已完成':'未完成', i.content||'', i.note||'']));
-      downloadCSV(rows, `待辦_共用_${today}`);
-    }
-    if (downloadChecks.personalTodo) {
-      const rows = [['狀態', '項目', '備註']];
-      // 個人待辦從各頁面的 data 取，這裡先跳過
-      downloadCSV(rows, `待辦_個人_${today}`);
+      downloads.push({ rows, name: `待辦_共用_${today}` });
     }
     if (downloadChecks.sharedNotes) {
       const rows = [['日期', '內容']];
       const items = Array.isArray(sharedNotes) ? sharedNotes : [];
       items.forEach(i => rows.push([i.date||'', i.content||'']));
-      downloadCSV(rows, `記事_共用_${today}`);
+      downloads.push({ rows, name: `記事_共用_${today}` });
     }
     if (downloadChecks.personalNotes) {
       const rows = [['日期', '內容']];
       myNotes.forEach(i => rows.push([i.date||'', i.content||'']));
-      downloadCSV(rows, `記事_個人_${today}`);
+      downloads.push({ rows, name: `記事_個人_${today}` });
+    }
+
+    // 打包成 zip 下載
+    const today = new Date().toLocaleDateString('zh-TW').replace(/\//g, '-');
+    const files = downloads.map(d => ({
+      name: `${d.name}.csv`,
+      content: rowsToCSV(d.rows),
+    }));
+    if (files.length > 0) {
+      downloadZip(files, `旅遊資料_${today}`);
     }
   };
 
@@ -4636,13 +4670,8 @@ const MainLayout = () => {
           <span className="text-sm font-black text-slate-700 max-w-[80px] truncate tracking-wide">{currentMember?.name}</span>
         </button>
 
-        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
+        <div className="absolute left-1/2 -translate-x-1/2">
           <h1 className="text-lg font-black text-slate-800 tracking-wider whitespace-nowrap">旅遊小助理</h1>
-          {activeTab !== 'home' && (
-            <button onClick={() => downloadTriggerRef.current && downloadTriggerRef.current()} className="p-1 text-slate-400 hover:text-blue-500 active:scale-90 transition-colors">
-              <Download size={20} />
-            </button>
-          )}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowSettings(true)} className="p-1.5 text-slate-400 hover:text-slate-700 active:scale-90 transition-colors"><Settings size={24} /></button>
