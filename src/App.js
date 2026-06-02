@@ -3478,7 +3478,7 @@ const WalletTab = ({ onDownload }) => {
 
               <div className="flex justify-end items-center gap-1.5 mt-2">
                 <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-blue-500' : 'text-red-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
-                {isIncome ? <TrendingUp size={22} className="text-red-400 opacity-80" /> : <TrendingDown size={22} className="text-blue-300 opacity-80" />}
+                {isIncome ? <TrendingUp size={22} className="text-blue-400 opacity-80" /> : <TrendingDown size={22} className="text-red-400 opacity-80" />}
               </div>
             </div>
           );
@@ -4572,7 +4572,7 @@ const MainLayout = () => {
   });
 
   const handleBatchDownload = () => {
-    const today = new Date().toLocaleDateString('zh-TW');
+    const today = new Date().toLocaleDateString('zh-TW').replace(/\//g, '-');
     const myWallet = Array.isArray(personalWallet) ? personalWallet : [];
     const myNotes = Array.isArray(personalNotes) ? personalNotes : [];
 
