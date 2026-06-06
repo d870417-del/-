@@ -3771,8 +3771,12 @@ const WalletTab = ({ onDownload }) => {
             date: formattedDate,
             editedById: currentMember?.id || '',
             createdAt: modal.data.createdAt || Date.now(),
-            contributorIds: modal.data.type === '存入' ? (modal.data.contributorIds || allMemberIds) : undefined,
-            forMemberIds: modal.data.type === '支出' ? (modal.data.forMemberIds || allMemberIds) : undefined,
+            contributorIds: modal.data.type === '存入'
+              ? (Array.isArray(modal.data.contributorIds) && modal.data.contributorIds.length > 0 ? modal.data.contributorIds : allMemberIds)
+              : undefined,
+            forMemberIds: modal.data.type === '支出'
+              ? (Array.isArray(modal.data.forMemberIds) && modal.data.forMemberIds.length > 0 ? modal.data.forMemberIds : allMemberIds)
+              : undefined,
           };
           const cleanData = Object.fromEntries(
             Object.entries(rawData)
@@ -3787,10 +3791,32 @@ const WalletTab = ({ onDownload }) => {
           // 統一用同一個 id，確保 walletItemId 對得上
           const now = Date.now();
           const walletItemId = modal.data.id ? modal.data.id : now;
-          // 共用錢包加上 sharedCustomAmts
-          const finalData = subTab === '共用錢包' && modal.data.sharedCustomAmts
-            ? { ...cleanData, sharedCustomAmts: modal.data.sharedCustomAmts }
-            : cleanData;
+          // 共用錢包：計算實際分配金額存進 sharedCustomAmts
+          let finalData = cleanData;
+          if (subTab === '共用錢包') {
+            const isIn = cleanData.type === '存入';
+            const ids = isIn
+              ? (Array.isArray(cleanData.contributorIds) && cleanData.contributorIds.length > 0 ? cleanData.contributorIds : allMemberIds)
+              : (Array.isArray(cleanData.forMemberIds) && cleanData.forMemberIds.length > 0 ? cleanData.forMemberIds : allMemberIds);
+            const customAmts = modal.data.sharedCustomAmts || {};
+            const totalAmt = Number(cleanData.amount) || 0;
+            const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
+            const unfilledIds = ids.filter(id => !customAmts[id]);
+            const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
+            // 輪流補足差額：用 walletItemId % unfilledIds.length 決定誰多分
+            const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
+            const rotateIdx = unfilledIds.length > 0 ? Math.abs(walletItemId % unfilledIds.length) : 0;
+            const finalAmts = {};
+            ids.forEach(id => {
+              if (customAmts[id]) {
+                finalAmts[id] = Number(customAmts[id]);
+              } else {
+                const unfilledIdx = unfilledIds.indexOf(id);
+                finalAmts[id] = perUnfilled + (unfilledIdx === rotateIdx ? remainder : 0);
+              }
+            });
+            finalData = { ...cleanData, sharedCustomAmts: finalAmts };
+          }
           if (modal.data.id) setActiveWallet(p => (Array.isArray(p) ? p : []).map(w => w.id === modal.data.id ? finalData : w));
           else setActiveWallet(p => [...(Array.isArray(p) ? p : []), { ...finalData, id: walletItemId }]);
 
