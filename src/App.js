@@ -3813,12 +3813,14 @@ const WalletTab = ({ onDownload }) => {
             const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
             const rotateIdx = unfilledIds.length > 0 ? Math.abs(walletItemId % unfilledIds.length) : 0;
             const finalAmts = {};
+            const startIdxSave = unfilledIds.length > 0 ? Math.abs(walletItemId % unfilledIds.length) : 0;
             ids.forEach(id => {
               if (customAmts[id]) {
                 finalAmts[id] = Number(customAmts[id]);
               } else {
-                const unfilledIdx = unfilledIds.indexOf(id);
-                finalAmts[id] = perUnfilled + (unfilledIdx === rotateIdx ? remainder : 0);
+                const myIdx = unfilledIds.indexOf(id);
+                const adjustedIdx = (myIdx - startIdxSave + unfilledIds.length) % unfilledIds.length;
+                finalAmts[id] = perUnfilled + (adjustedIdx < remainder ? 1 : 0);
               }
             });
             finalData = { ...cleanData, sharedCustomAmts: finalAmts };
@@ -3950,22 +3952,19 @@ const WalletTab = ({ onDownload }) => {
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
           const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
-          const unfilledIdxList = ids.map((id, i) => !customAmts[id] ? i : -1).filter(i => i >= 0);
-          const rotateIdx = unfilledIdxList.length > 0
-            ? unfilledIdxList[Math.abs((Number(w.id) || 0) % unfilledIdxList.length)]
-            : -1;
-          let distributed = filledSum;
-          let unfilledDistributed = 0;
-          ids.forEach((id, idx) => {
+          const unfilledIds_in = ids.filter(id => !customAmts[id]);
+          const remainder_in = totalAmt - filledSum - perUnfilled * unfilledIds_in.length;
+          const startIdx_in = unfilledIds_in.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds_in.length) : 0;
+          ids.forEach((id) => {
             if (!memberBalance[id]) return;
-            let amt = Number(customAmts[id]) || perUnfilled;
-            if (!customAmts[id]) {
-              if (idx === rotateIdx) {
-                amt = totalAmt - distributed - (unfilledIdxList.length - 1) * perUnfilled + unfilledDistributed;
-              }
-              unfilledDistributed += perUnfilled;
+            let amt;
+            if (customAmts[id]) {
+              amt = Number(customAmts[id]);
+            } else {
+              const myIdx = unfilledIds_in.indexOf(id);
+              const adjustedIdx = (myIdx - startIdx_in + unfilledIds_in.length) % unfilledIds_in.length;
+              amt = perUnfilled + (adjustedIdx < remainder_in ? 1 : 0);
             }
-            distributed += Number(customAmts[id]) ? amt : 0;
             memberBalance[id][w.currency] += amt;
           });
         });
@@ -3979,22 +3978,19 @@ const WalletTab = ({ onDownload }) => {
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
           const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
-          const unfilledIdxList2 = ids.map((id, i) => !customAmts[id] ? i : -1).filter(i => i >= 0);
-          const rotateIdx2 = unfilledIdxList2.length > 0
-            ? unfilledIdxList2[Math.abs((Number(w.id) || 0) % unfilledIdxList2.length)]
-            : -1;
-          let distributed2 = filledSum;
-          let unfilledDistributed2 = 0;
-          ids.forEach((id, idx) => {
+          const unfilledIds_out = ids.filter(id => !customAmts[id]);
+          const remainder_out = totalAmt - filledSum - perUnfilled * unfilledIds_out.length;
+          const startIdx_out = unfilledIds_out.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds_out.length) : 0;
+          ids.forEach((id) => {
             if (!memberBalance[id]) return;
-            let amt = Number(customAmts[id]) || perUnfilled;
-            if (!customAmts[id]) {
-              if (idx === rotateIdx2) {
-                amt = totalAmt - distributed2 - (unfilledIdxList2.length - 1) * perUnfilled + unfilledDistributed2;
-              }
-              unfilledDistributed2 += perUnfilled;
+            let amt;
+            if (customAmts[id]) {
+              amt = Number(customAmts[id]);
+            } else {
+              const myIdx = unfilledIds_out.indexOf(id);
+              const adjustedIdx = (myIdx - startIdx_out + unfilledIds_out.length) % unfilledIds_out.length;
+              amt = perUnfilled + (adjustedIdx < remainder_out ? 1 : 0);
             }
-            distributed2 += Number(customAmts[id]) ? amt : 0;
             memberBalance[id][w.currency] -= amt;
           });
         });
@@ -4010,36 +4006,41 @@ const WalletTab = ({ onDownload }) => {
         const balance = { KRW: totalIn.KRW - totalOut.KRW, JPY: totalIn.JPY - totalOut.JPY, TWD: totalIn.TWD - totalOut.TWD };
 
         // 每人明細
+        // 計算某人在某筆帳的實際金額（跟 memberBalance 完全一致）
+        const getMemberAmount = (w, memberId, ids) => {
+          const customAmts = w.sharedCustomAmts || {};
+          const totalAmt = Number(w.amount) || 0;
+          if (customAmts[memberId] !== undefined && customAmts[memberId] !== '') {
+            return Number(customAmts[memberId]);
+          }
+          // 沒有自訂：每人 floor，餘數分給前 remainder 個人（每人多 1）
+          const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
+          const unfilledIds = ids.filter(id => !customAmts[id]);
+          const remaining = totalAmt - filledSum;
+          const perUnfilled = unfilledIds.length > 0 ? Math.floor(remaining / unfilledIds.length) : 0;
+          const remainder = remaining - perUnfilled * unfilledIds.length;
+          // 用 walletId 決定從哪個人開始多 1（輪流）
+          const startIdx = unfilledIds.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds.length) : 0;
+          const myUnfilledIdx = unfilledIds.indexOf(memberId);
+          // 前 remainder 個人（從 startIdx 開始）各多 1 塊
+          const adjustedIdx = (myUnfilledIdx - startIdx + unfilledIds.length) % unfilledIds.length;
+          return perUnfilled + (adjustedIdx < remainder ? 1 : 0);
+        };
+
         const getMemberDetail = (memberId) => {
           const lines = [];
           wallet.forEach(w => {
-            const customAmts = w.sharedCustomAmts || {};
             if (w.type === '存入') {
               const rawCIds = w.contributorIds;
               const ids = (Array.isArray(rawCIds) && rawCIds.length > 0 ? rawCIds : allMemberIds).filter(Boolean);
               if (!ids.includes(memberId)) return;
-              // 優先用 sharedCustomAmts，沒有才平分
-              let perAmount;
-              if (customAmts[memberId]) {
-                perAmount = Number(customAmts[memberId]);
-              } else {
-                const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-                const unfilledIds = ids.filter(id => !customAmts[id]);
-                perAmount = unfilledIds.length > 0 ? Math.round(((Number(w.amount) || 0) - filledSum) / unfilledIds.length) : 0;
-              }
+              const perAmount = getMemberAmount(w, memberId, ids);
               lines.push({ type: 'in', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
             } else {
               const rawFIds = w.forMemberIds;
               const ids = (Array.isArray(rawFIds) && rawFIds.length > 0 ? rawFIds : allMemberIds).filter(Boolean);
               if (!ids.includes(memberId)) return;
-              let perAmount;
-              if (customAmts[memberId]) {
-                perAmount = Number(customAmts[memberId]);
-              } else {
-                const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-                const unfilledIds = ids.filter(id => !customAmts[id]);
-                perAmount = unfilledIds.length > 0 ? Math.round(((Number(w.amount) || 0) - filledSum) / unfilledIds.length) : 0;
-              }
+              const perAmount = getMemberAmount(w, memberId, ids);
               lines.push({ type: 'out', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
             }
           });
