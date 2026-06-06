@@ -3665,7 +3665,13 @@ const WalletTab = ({ onDownload }) => {
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
           const unfilledIds = ids.filter(id => !customAmts[id]);
           const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
-          const actualTotal = ids.reduce((s, id) => s + (Number(customAmts[id]) || perUnfilled), 0);
+          const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
+          const rotateIdx = unfilledIds.length > 0 ? Math.abs((walletItemId || Date.now()) % unfilledIds.length) : 0;
+          const actualTotal = ids.reduce((s, id) => {
+            if (customAmts[id]) return s + Number(customAmts[id]);
+            const unfilledIdx = unfilledIds.indexOf(id);
+            return s + perUnfilled + (unfilledIdx === rotateIdx ? remainder : 0);
+          }, 0);
           const isOver = actualTotal > totalAmt + 1;
           const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
           return (
@@ -3890,7 +3896,7 @@ const WalletTab = ({ onDownload }) => {
               splitMembers.forEach((entry, idx) => {
                 const memberId = entry.id;
                 if (deletedReceiverIds.has(memberId)) return;
-                const memberAmt = Number(entry.amount) || perUnfilled || Math.round(totalAmt / count);
+                const memberAmt = Number(entry.amount) || perUnfilled || Math.round(totalAmt / (splitMembers.length + 1));
                 const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
                 const proxyRecord = {
                   id: now + idx + 200,
@@ -4007,17 +4013,33 @@ const WalletTab = ({ onDownload }) => {
         const getMemberDetail = (memberId) => {
           const lines = [];
           wallet.forEach(w => {
+            const customAmts = w.sharedCustomAmts || {};
             if (w.type === '存入') {
               const rawCIds = w.contributorIds;
               const ids = (Array.isArray(rawCIds) && rawCIds.length > 0 ? rawCIds : allMemberIds).filter(Boolean);
               if (!ids.includes(memberId)) return;
-              const perAmount = Math.round((Number(w.amount) || 0) / ids.length);
+              // 優先用 sharedCustomAmts，沒有才平分
+              let perAmount;
+              if (customAmts[memberId]) {
+                perAmount = Number(customAmts[memberId]);
+              } else {
+                const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
+                const unfilledIds = ids.filter(id => !customAmts[id]);
+                perAmount = unfilledIds.length > 0 ? Math.round(((Number(w.amount) || 0) - filledSum) / unfilledIds.length) : 0;
+              }
               lines.push({ type: 'in', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
             } else {
               const rawFIds = w.forMemberIds;
               const ids = (Array.isArray(rawFIds) && rawFIds.length > 0 ? rawFIds : allMemberIds).filter(Boolean);
               if (!ids.includes(memberId)) return;
-              const perAmount = Math.round((Number(w.amount) || 0) / ids.length);
+              let perAmount;
+              if (customAmts[memberId]) {
+                perAmount = Number(customAmts[memberId]);
+              } else {
+                const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
+                const unfilledIds = ids.filter(id => !customAmts[id]);
+                perAmount = unfilledIds.length > 0 ? Math.round(((Number(w.amount) || 0) - filledSum) / unfilledIds.length) : 0;
+              }
               lines.push({ type: 'out', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
             }
           });
