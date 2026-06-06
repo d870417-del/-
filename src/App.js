@@ -3666,11 +3666,12 @@ const WalletTab = ({ onDownload }) => {
           const unfilledIds = ids.filter(id => !customAmts[id]);
           const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
           const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
-          const rotateIdx = unfilledIds.length > 0 ? Math.abs((walletItemId || Date.now()) % unfilledIds.length) : 0;
+          const startIdxDisplay = unfilledIds.length > 0 ? Math.abs((walletItemId || Date.now()) % unfilledIds.length) : 0;
           const actualTotal = ids.reduce((s, id) => {
             if (customAmts[id]) return s + Number(customAmts[id]);
-            const unfilledIdx = unfilledIds.indexOf(id);
-            return s + perUnfilled + (unfilledIdx === rotateIdx ? remainder : 0);
+            const myIdx = unfilledIds.indexOf(id);
+            const adjustedIdx = (myIdx - startIdxDisplay + unfilledIds.length) % unfilledIds.length;
+            return s + perUnfilled + (adjustedIdx < remainder ? 1 : 0);
           }, 0);
           const isOver = actualTotal > totalAmt + 1;
           const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
@@ -3809,11 +3810,9 @@ const WalletTab = ({ onDownload }) => {
             const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
             const unfilledIds = ids.filter(id => !customAmts[id]);
             const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
-            // 輪流補足差額：用 walletItemId % unfilledIds.length 決定誰多分
             const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
-            const rotateIdx = unfilledIds.length > 0 ? Math.abs(walletItemId % unfilledIds.length) : 0;
-            const finalAmts = {};
             const startIdxSave = unfilledIds.length > 0 ? Math.abs(walletItemId % unfilledIds.length) : 0;
+            const finalAmts = {};
             ids.forEach(id => {
               if (customAmts[id]) {
                 finalAmts[id] = Number(customAmts[id]);
