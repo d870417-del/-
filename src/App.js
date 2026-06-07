@@ -3682,7 +3682,7 @@ const WalletTab = ({ onDownload }) => {
           const unfilledIds = ids.filter(id => !customAmts[id]);
           const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
           const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
-          const startIdxDisplay = unfilledIds.length > 0 ? Math.abs((walletItemId || Date.now()) % unfilledIds.length) : 0;
+          const startIdxDisplay = unfilledIds.length > 0 ? Math.abs((modal.data?.id || Date.now()) % unfilledIds.length) : 0;
           const actualTotal = ids.reduce((s, id) => {
             if (customAmts[id]) return s + Number(customAmts[id]);
             const myIdx = unfilledIds.indexOf(id);
