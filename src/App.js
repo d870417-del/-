@@ -63,7 +63,7 @@ const useCloudState = (key, initial) => {
     const timeoutId = setTimeout(() => {
       console.warn(`Firebase 連線逾時 (key: ${safeKey})，使用本地預設值`);
       setLoading(false);
-    }, 10000);
+    }, 5000);
 
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       clearTimeout(timeoutId);
@@ -299,6 +299,8 @@ export function MemberProvider({ children }) {
   };
   const createInitialAdmin = () => {
     if (!initName.trim()) return;
+    // 防止意外覆蓋：只有 allMembers 真的是空的才能建立
+    if (Array.isArray(allMembers) && allMembers.length > 0) return;
     const admin = { id: 'admin-' + Date.now(), name: initName.trim(), role: '管理員', avatarColor: '#3b82f6', photo: null, createdAt: Date.now() };
     setAllMembers([admin]);
     setInitName('');
@@ -653,7 +655,7 @@ const HomePage = ({ onNavigate }) => {
               <p className="text-xs font-bold text-blue-500 tracking-widest uppercase flex items-center gap-1"><Calendar size={12} /> {s.checkIn} — {s.checkOut}</p>
             </div>
             {s.mapUrl && (
-              <a href={s.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
+              <a href={s.mapUrl} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); e.stopPropagation(); if (s.mapUrl) window.open(s.mapUrl, "_blank"); }} className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
                 <Navigation size={20} />
                 <span className="text-[10px] font-bold mt-0.5">MAP</span>
               </a>
@@ -928,7 +930,7 @@ const TripPage = ({ onDownload, onNavigateToFood }) => {
                           <span className="text-[9px] font-bold mt-0.5">詳情</span>
                         </button>
                       ) : item.mapUrl ? (
-                        <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
+                        <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); e.stopPropagation(); if (item.mapUrl) window.open(item.mapUrl, "_blank"); }} className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
                           <Navigation size={20} />
                           <span className="text-[10px] font-bold mt-0.5">MAP</span>
                         </a>
@@ -1427,12 +1429,12 @@ const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
                   </div>
                   <div className="flex gap-1.5 flex-wrap justify-end">
                     {(item.branches || []).filter(b => b.mapUrl).map((b, bi) => (
-                      <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" className="px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1 text-xs font-black transition-colors">
+                      <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); e.stopPropagation(); if (b.mapUrl) window.open(b.mapUrl, "_blank"); }} className="px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1 text-xs font-black transition-colors">
                         <Navigation size={11} strokeWidth={2.5} />{b.name || `分店${bi + 1}`}
                       </a>
                     ))}
                     {!(item.branches || []).length && item.mapUrl && (
-                      <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); e.stopPropagation(); if (item.mapUrl) window.open(item.mapUrl, "_blank"); }} className="px-3 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-500 border border-orange-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
                         <Navigation size={13} strokeWidth={2.5} />開啟導航
                       </a>
                     )}
@@ -2311,12 +2313,12 @@ const ShoppingPage = ({ onDownload }) => {
                   </div>
                   <div className="flex gap-1.5 flex-wrap justify-end">
                     {(item.branches || []).filter(b => b.mapUrl).map((b, bi) => (
-                      <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" className="px-2.5 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1 text-xs font-black transition-colors">
+                      <a key={bi} href={b.mapUrl} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); e.stopPropagation(); if (b.mapUrl) window.open(b.mapUrl, "_blank"); }} className="px-2.5 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1 text-xs font-black transition-colors">
                         <Navigation size={11} strokeWidth={2.5} />{b.name || `分店${bi + 1}`}
                       </a>
                     ))}
                     {!(item.branches || []).length && item.mapUrl && (
-                      <a href={item.mapUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
+                      <a href={item.mapUrl} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); e.stopPropagation(); if (item.mapUrl) window.open(item.mapUrl, "_blank"); }} className="px-3 py-1.5 bg-pink-50 hover:bg-pink-100 text-pink-500 border border-pink-100 rounded-xl flex items-center gap-1.5 text-xs font-black transition-colors">
                         <Navigation size={13} strokeWidth={2.5} />導航
                       </a>
                     )}
@@ -3794,10 +3796,12 @@ const WalletTab = ({ onDownload }) => {
             editedById: currentMember?.id || '',
             createdAt: modal.data.createdAt || Date.now(),
             contributorIds: modal.data.type === '存入'
-              ? (Array.isArray(modal.data.contributorIds) && modal.data.contributorIds.length > 0 ? modal.data.contributorIds : allMemberIds)
+              ? (Array.isArray(modal.data.contributorIds) && modal.data.contributorIds.filter(id => allMemberIds.includes(id)).length > 0
+                  ? modal.data.contributorIds.filter(id => allMemberIds.includes(id)) : allMemberIds)
               : undefined,
             forMemberIds: modal.data.type === '支出'
-              ? (Array.isArray(modal.data.forMemberIds) && modal.data.forMemberIds.length > 0 ? modal.data.forMemberIds : allMemberIds)
+              ? (Array.isArray(modal.data.forMemberIds) && modal.data.forMemberIds.filter(id => allMemberIds.includes(id)).length > 0
+                  ? modal.data.forMemberIds.filter(id => allMemberIds.includes(id)) : allMemberIds)
               : undefined,
           };
           const cleanData = Object.fromEntries(
@@ -3960,7 +3964,8 @@ const WalletTab = ({ onDownload }) => {
         // 存入：依 contributorIds 分配，若有 sharedCustomAmts 用自訂金額
         wallet.filter(w => w.type === '存入').forEach(w => {
           const rawIds = w.contributorIds;
-          const ids = (Array.isArray(rawIds) && rawIds.length > 0 ? rawIds : allMemberIds).filter(Boolean);
+          const rawIdsFiltered = Array.isArray(rawIds) ? rawIds.filter(id => allMemberIds.includes(id)) : [];
+          const ids = (rawIdsFiltered.length > 0 ? rawIdsFiltered : allMemberIds).filter(Boolean);
           const customAmts = w.sharedCustomAmts || {};
           const totalAmt = Number(w.amount) || 0;
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
@@ -3985,7 +3990,8 @@ const WalletTab = ({ onDownload }) => {
         // 支出：依 forMemberIds 分配，若有 sharedCustomAmts 用自訂金額
         wallet.filter(w => w.type === '支出').forEach(w => {
           const rawOutIds = w.forMemberIds;
-          const ids = (Array.isArray(rawOutIds) && rawOutIds.length > 0 ? rawOutIds : allMemberIds).filter(Boolean);
+          const rawOutFiltered = Array.isArray(rawOutIds) ? rawOutIds.filter(id => allMemberIds.includes(id)) : [];
+          const ids = (rawOutFiltered.length > 0 ? rawOutFiltered : allMemberIds).filter(Boolean);
           const customAmts = w.sharedCustomAmts || {};
           const totalAmt = Number(w.amount) || 0;
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
@@ -4044,13 +4050,15 @@ const WalletTab = ({ onDownload }) => {
           wallet.forEach(w => {
             if (w.type === '存入') {
               const rawCIds = w.contributorIds;
-              const ids = (Array.isArray(rawCIds) && rawCIds.length > 0 ? rawCIds : allMemberIds).filter(Boolean);
+              const rawCFiltered = Array.isArray(rawCIds) ? rawCIds.filter(id => allMemberIds.includes(id)) : [];
+              const ids = (rawCFiltered.length > 0 ? rawCFiltered : allMemberIds).filter(Boolean);
               if (!ids.includes(memberId)) return;
               const perAmount = getMemberAmount(w, memberId, ids);
               lines.push({ type: 'in', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
             } else {
               const rawFIds = w.forMemberIds;
-              const ids = (Array.isArray(rawFIds) && rawFIds.length > 0 ? rawFIds : allMemberIds).filter(Boolean);
+              const rawFFiltered = Array.isArray(rawFIds) ? rawFIds.filter(id => allMemberIds.includes(id)) : [];
+              const ids = (rawFFiltered.length > 0 ? rawFFiltered : allMemberIds).filter(Boolean);
               if (!ids.includes(memberId)) return;
               const perAmount = getMemberAmount(w, memberId, ids);
               lines.push({ type: 'out', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
@@ -4894,7 +4902,7 @@ const MainLayout = () => {
 export default function App() {
   const [loadingTimeout, setLoadingTimeout] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setLoadingTimeout(true), 12000);
+    const t = setTimeout(() => setLoadingTimeout(true), 6000);
     return () => clearTimeout(t);
   }, []);
 
@@ -4931,7 +4939,7 @@ export default function App() {
               </div>
             );
           }
-          if (!allMembers || allMembers.length === 0) return <InitScreen />;
+          if (!isMembersLoading && (!allMembers || allMembers.length === 0)) return <InitScreen />;
           if (!currentMember) return <AuthScreen />;
           return <MainLayout />;
         }}
