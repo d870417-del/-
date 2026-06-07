@@ -2975,6 +2975,23 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
   );
 };
 
+// ─── ErrorBoundary ───────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-8 text-center">
+          <p className="text-red-500 font-bold text-lg mb-2">載入失敗</p>
+          <p className="text-xs text-slate-500 bg-slate-100 p-3 rounded-xl">{this.state.error.message}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ─── WalletTab ────────────────────────────────────────────────────────────────
 const WalletTab = ({ onDownload }) => {
   const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shoppingList, setShoppingList, customRates } = useMember();
@@ -4731,18 +4748,7 @@ const MainLayout = () => {
         {activeTab === 'food' && <FoodPage onDownload={setDownloadTrigger} highlightId={foodHighlightId} onClearHighlight={() => setFoodHighlightId(null)} />}
         {activeTab === 'shopping' && <ShoppingPage onDownload={setDownloadTrigger} />}
         {activeTab === 'list' && <ListTab onDownload={setDownloadTrigger} />}
-        {activeTab === 'wallet' && (() => {
-        try {
-          return <WalletTab onDownload={setDownloadTrigger} />;
-        } catch(e) {
-          return (
-            <div className="p-8 text-center">
-              <p className="text-red-500 font-bold mb-2">記帳頁載入失敗</p>
-              <p className="text-xs text-slate-400">{e.message}</p>
-            </div>
-          );
-        }
-      })()}
+        {activeTab === 'wallet' && <ErrorBoundary><WalletTab onDownload={setDownloadTrigger} /></ErrorBoundary>}
         {activeTab === 'notes' && <NotesTab onDownload={setDownloadTrigger} />}
       </div>
 
