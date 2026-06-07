@@ -2977,7 +2977,7 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
 
 // ─── WalletTab ────────────────────────────────────────────────────────────────
 const WalletTab = ({ onDownload }) => {
-  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shoppingList, setShoppingList } = useMember();
+  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shoppingList, setShoppingList, customRates } = useMember();
   const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
   const [subTab, setSubTab] = useState('共用錢包');
   const handleSubTabChange = (tab) => {
@@ -2997,7 +2997,6 @@ const WalletTab = ({ onDownload }) => {
   const [transferStates, setTransferStates] = useState({});
   const [walletError, setWalletError] = useState(null);
   const { rates: autoRates, updatedAt } = useExchangeRates();
-  const { customRates } = useMember();
   const rates = { TWD: 1, JPY: customRates?.JPY || autoRates.JPY, KRW: customRates?.KRW || autoRates.KRW };
   const toTWD = useCallback((amount, currency) => Math.round(amount * (rates[currency] || 1)), [rates]);
   const SYM = { KRW: '₩', JPY: '¥', TWD: '$' };
