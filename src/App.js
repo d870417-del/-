@@ -3764,7 +3764,6 @@ const WalletTab = ({ onDownload }) => {
             const availableBalance = currentBalance + originalAmt;
             if (amt > availableBalance) {
               setWalletError({ cur, available: availableBalance, requested: amt }); return;
-              return;
             }
           }
 
