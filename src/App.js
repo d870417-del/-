@@ -4591,9 +4591,8 @@ const AuthScreen = () => {
 const MainLayout = () => {
   const { currentMember, logout, allMembers, setAllMembers, updateMember,
     globalItinerary, sharedWallet, personalWallet, sharedNotes, personalNotes,
-    allPersonalNotes, shoppingList, sharedTodos } = useMember();
+    allPersonalNotes, shoppingList, sharedTodos, customRates, setCustomRates } = useMember();
   const { rates: autoRates, updatedAt } = useExchangeRates();
-  const { customRates, setCustomRates } = useMember();
   // 優先用自訂匯率，否則用即時匯率
   const rates = { TWD: 1, JPY: customRates?.JPY || autoRates.JPY, KRW: customRates?.KRW || autoRates.KRW };
   const [activeTab, setActiveTab] = useState('home');
