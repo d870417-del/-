@@ -3949,9 +3949,8 @@ const WalletTab = ({ onDownload }) => {
           const customAmts = w.sharedCustomAmts || {};
           const totalAmt = Number(w.amount) || 0;
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-          const unfilledIds = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
           const unfilledIds_in = ids.filter(id => !customAmts[id]);
+          const perUnfilled = unfilledIds_in.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds_in.length) : 0;
           const remainder_in = totalAmt - filledSum - perUnfilled * unfilledIds_in.length;
           const startIdx_in = unfilledIds_in.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds_in.length) : 0;
           ids.forEach((id) => {
@@ -3975,9 +3974,8 @@ const WalletTab = ({ onDownload }) => {
           const customAmts = w.sharedCustomAmts || {};
           const totalAmt = Number(w.amount) || 0;
           const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-          const unfilledIds = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
           const unfilledIds_out = ids.filter(id => !customAmts[id]);
+          const perUnfilled = unfilledIds_out.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds_out.length) : 0;
           const remainder_out = totalAmt - filledSum - perUnfilled * unfilledIds_out.length;
           const startIdx_out = unfilledIds_out.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds_out.length) : 0;
           ids.forEach((id) => {
