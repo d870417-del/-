@@ -2980,14 +2980,6 @@ const WalletTab = ({ onDownload }) => {
   const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shoppingList, setShoppingList, customRates } = useMember();
   const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
   const [subTab, setSubTab] = useState('共用錢包');
-  const handleSubTabChange = (tab) => {
-    setSubTab(tab);
-    // 切換 Tab 時重置選中日期到最後一天
-    setSelectedDate(() => {
-      const today = new Date();
-      return `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
-    });
-  };
   const [modal, setModal] = useState({ type: null, data: null });
   const [isCalcOpen, setIsCalcOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
@@ -3028,6 +3020,14 @@ const WalletTab = ({ onDownload }) => {
     const today = new Date();
     return `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
   });
+
+  const handleSubTabChange = (tab) => {
+    setSubTab(tab);
+    setSelectedDate(() => {
+      const today = new Date();
+      return `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
+    });
+  };
 
   useEffect(() => {
     if (visibleWalletDates.length > 0 && !visibleWalletDates.includes(selectedDate)) {
