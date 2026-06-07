@@ -4731,7 +4731,18 @@ const MainLayout = () => {
         {activeTab === 'food' && <FoodPage onDownload={setDownloadTrigger} highlightId={foodHighlightId} onClearHighlight={() => setFoodHighlightId(null)} />}
         {activeTab === 'shopping' && <ShoppingPage onDownload={setDownloadTrigger} />}
         {activeTab === 'list' && <ListTab onDownload={setDownloadTrigger} />}
-        {activeTab === 'wallet' && <WalletTab onDownload={setDownloadTrigger} />}
+        {activeTab === 'wallet' && (() => {
+        try {
+          return <WalletTab onDownload={setDownloadTrigger} />;
+        } catch(e) {
+          return (
+            <div className="p-8 text-center">
+              <p className="text-red-500 font-bold mb-2">記帳頁載入失敗</p>
+              <p className="text-xs text-slate-400">{e.message}</p>
+            </div>
+          );
+        }
+      })()}
         {activeTab === 'notes' && <NotesTab onDownload={setDownloadTrigger} />}
       </div>
 
