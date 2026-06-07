@@ -9,7 +9,7 @@ import {
 import { db } from './firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 
-const IS_DEV = process.env.NODE_ENV === 'development';
+const IS_DEV = true; // 🔧 測試時改 true，上線時改 false
 const appId = IS_DEV ? 'travel-pro-v42-DEV' : 'travel-pro-v42-final';
 
 // ─── 圖片自動壓縮工具（防止圖片過大撐爆 Firestore 1MB 限制） ───────────────────
@@ -268,7 +268,6 @@ export function MemberProvider({ children }) {
   const [allPersonalWallets, setAllPersonalWallets] = useCloudState(`${appId}:allPersonalWallets`, {});
   const [allPersonalNotes, setAllPersonalNotes] = useCloudState(`${appId}:allPersonalNotes`, {});
   const [splitRecords, setSplitRecords] = useCloudState(`${appId}:splitRecords`, []);
-  const [customRates, setCustomRates] = useCloudState(`${appId}:customRates`, { JPY: 0.22, KRW: 0.022 });
 
   const personalWallet = currentMember ? (allPersonalWallets[currentMember.id] || []) : [];
   const setPersonalWallet = useCallback((valOrFn) => {
@@ -314,11 +313,10 @@ export function MemberProvider({ children }) {
     shoppingList, setShoppingList,
     sharedTodos, setSharedTodos,
     sharedWallet, setSharedWallet, sharedNotes, setSharedNotes,
-    personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, personalNotes, setPersonalNotes,
+    personalWallet, setPersonalWallet, allPersonalWallets, personalNotes, setPersonalNotes,
     foodOptions, setFoodOptions,
     shopOptions, setShopOptions,
     splitRecords, setSplitRecords,
-    customRates, setCustomRates,
   };
   return <MemberContext.Provider value={value}>{children}</MemberContext.Provider>;
 }
@@ -341,7 +339,7 @@ const ConfirmDialog = ({ isOpen, onClose, onConfirm, title, message, confirmText
         </div>
         <div className="flex gap-3 w-full mt-2">
           <button onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 font-bold rounded-2xl active:scale-95 text-sm hover:bg-slate-200 transition-colors">取消</button>
-          <button onClick={() => { onClose(); setTimeout(() => onConfirm(), 50); }} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl active:scale-95 shadow-md shadow-red-100 text-sm hover:bg-red-600 transition-colors">{confirmText}</button>
+          <button onClick={() => { onConfirm(); onClose(); }} className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl active:scale-95 shadow-md shadow-red-100 text-sm hover:bg-red-600 transition-colors">{confirmText}</button>
         </div>
       </div>
     </div>
@@ -435,48 +433,6 @@ const downloadTextFile = (content, filename) => {
   a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
   a.download = `${filename}.txt`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-};
-
-const escapeCSV = v => {
-  const str = v === null || v === undefined ? '' : String(v);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-};
-
-const rowsToCSV = (rows) => '\uFEFF' + rows.map(row => row.map(escapeCSV).join(',')).join('\n');
-
-const downloadCSV = (rows, filename) => {
-  const csv = rowsToCSV(rows);
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  a.download = `${filename}.csv`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-};
-
-const downloadZip = async (files, zipName) => {
-  // files: [{ name: 'xxx.csv', content: '...' }, ...]
-  try {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-    document.head.appendChild(script);
-    await new Promise((resolve, reject) => {
-      script.onload = resolve;
-      script.onerror = reject;
-    });
-    const zip = new window.JSZip();
-    files.forEach(f => zip.file(f.name, f.content));
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `${zipName}.zip`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  } catch(e) {
-    console.error('zip error:', e);
-    // 失敗時改成分開下載
-    files.forEach((f, idx) => setTimeout(() => downloadCSV([], f.name.replace('.csv', '')), idx * 500));
-  }
 };
 
 const getSmartDate = (datesArray) => {
@@ -706,7 +662,7 @@ const HomePage = ({ onNavigate }) => {
 };
 
 // ─── TripPage ─────────────────────────────────────────────────────────────────
-const TripPage = ({ onDownload, onNavigateToFood }) => {
+const TripPage = ({ onDownload }) => {
   const { globalItinerary, setGlobalItinerary, tripDates, setTripDates, currentMember, allMembers } = useMember();
   const [selectedDate, setSelectedDate] = useState(() => getSmartDate(tripDates));
   const [viewMode, setViewMode] = useState('list');
@@ -746,25 +702,7 @@ const TripPage = ({ onDownload, onNavigateToFood }) => {
         if (i.mapUrl) text += `地圖: ${i.mapUrl}\n`;
         text += '---------------------------\n';
       });
-      // CSV 格式，所有日期
-      const rows = [['日期', '時間', '名稱', '地點', '城市', '類別', '備註']];
-      const allItems = Array.isArray(globalItinerary) ? [...globalItinerary].sort((a, b) => {
-        if ((a.date || '') < (b.date || '')) return -1;
-        if ((a.date || '') > (b.date || '')) return 1;
-        return (a.time || '').localeCompare(b.time || '');
-      }) : [];
-      allItems.forEach(item => {
-        rows.push([
-          item.date || '',
-          item.time || '',
-          item.name || '',
-          item.location || '',
-          item.city || '',
-          item.category || '',
-          item.note || '',
-        ]);
-      });
-      downloadCSV(rows, `行程_${new Date().toLocaleDateString('zh-TW')}`);
+      downloadTextFile(text, `Trip_${selectedDate.replace('/', '-')}`);
     });
   }, [filteredItems, selectedDate, onDownload]);
 
@@ -921,18 +859,10 @@ const TripPage = ({ onDownload, onNavigateToFood }) => {
                           <span>{editor.name} 編輯</span>
                         </div>
                       </div>
-                      {item.category === '美食' ? (
-                        <button onClick={() => onNavigateToFood && onNavigateToFood(item.id)}
-                          className="w-12 h-12 bg-orange-50 text-orange-500 rounded-2xl flex flex-col items-center justify-center hover:bg-orange-100 active:scale-90 border border-orange-100 shrink-0 transition-colors">
-                          <span className="text-xl leading-none">🍽️</span>
-                          <span className="text-[9px] font-bold mt-0.5">詳情</span>
-                        </button>
-                      ) : item.mapUrl ? (
-                        <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
-                          <Navigation size={20} />
-                          <span className="text-[10px] font-bold mt-0.5">MAP</span>
-                        </a>
-                      ) : null}
+                      {item.mapUrl && <a href={item.mapUrl} target="_blank" rel="noreferrer" className="w-12 h-12 bg-blue-50 text-blue-500 rounded-2xl flex flex-col items-center justify-center hover:bg-blue-100 active:scale-90 border border-blue-100 shrink-0 transition-colors">
+                        <Navigation size={20} />
+                        <span className="text-[10px] font-bold mt-0.5">MAP</span>
+                      </a>}
                     </div>
                   </div>
                 </div>
@@ -989,7 +919,7 @@ const TripPage = ({ onDownload, onNavigateToFood }) => {
 };
 
 // ─── FoodPage ─────────────────────────────────────────────────────────────────
-const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
+const FoodPage = ({ onDownload }) => {
   const { globalItinerary, setGlobalItinerary, tripDates, currentMember, allMembers, foodOptions, setFoodOptions } = useMember();
 
   // ── foodOptions 安全取值（全部從 Firebase 讀，所有項目都能增刪改）──
@@ -1011,19 +941,6 @@ const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
   const [confirmDel, setConfirmDel] = useState(null);
   const [viewerPhotos, setViewerPhotos] = useState(null);
   const [viewerIndex, setViewerIndex] = useState(0);
-  const [expandedId, setExpandedId] = useState(null);
-
-  // highlight 跳轉：自動展開對應卡片
-  useEffect(() => {
-    if (highlightId) {
-      setExpandedId(highlightId);
-      onClearHighlight && onClearHighlight();
-      setTimeout(() => {
-        const el = document.getElementById(`food-item-${highlightId}`);
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 300);
-    }
-  }, [highlightId]);
 
   // ── 自訂欄位狀態 ──
   const [customCity, setCustomCity] = useState('');
@@ -1074,7 +991,7 @@ const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
   useEffect(() => {
     if (typeof onDownload === 'function') {
       onDownload(() => () => {
-        let text = `🍽️ 美食清單 (${selectedCity}${selectedDistricts.length ? ' / ' + selectedDistricts.join('、') : ''} / ${selectedFoodType})\n${'='.repeat(50)}\n\n`;
+        let text = `🍜 美食清單 (${selectedCity}${selectedDistricts.length ? ' / ' + selectedDistricts.join('、') : ''} / ${selectedFoodType})\n${'='.repeat(50)}\n\n`;
         filteredFoodList.forEach((i, idx) => {
           const districts = (i.districts || []).join('、') || i.district || '未填';
           text += `${idx + 1}. 【${i.name}】\n   城市: ${i.city || '未填'} | 地區: ${districts}\n   類別: ${i.foodType || '未填'} | 日期: ${i.date || '待安排'} ${i.time || ''}\n`;
@@ -1082,20 +999,7 @@ const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
           if (i.note) text += `   備註: ${i.note}\n`;
           text += '-'.repeat(40) + '\n';
         });
-        const rows = [['名稱', '城市', '地區', '商場', '類型', '地圖', '備註']];
-        const allFood = Array.isArray(globalItinerary) ? globalItinerary.filter(i => i.category === '美食') : [];
-        allFood.forEach(item => {
-          rows.push([
-            item.name || '',
-            item.city || '',
-            item.district || '',
-            item.mall || '',
-            item.foodType || '',
-            (item.mapUrls || [item.mapUrl]).filter(Boolean).join('・'),
-            item.note || '',
-          ]);
-        });
-        downloadCSV(rows, `美食清單_${new Date().toLocaleDateString('zh-TW')}`);
+        downloadTextFile(text, `美食清單_${Date.now()}`);
       });
     }
   }, [filteredFoodList, selectedCity, selectedDistricts, selectedFoodType, onDownload]);
@@ -1391,8 +1295,7 @@ const FoodPage = ({ onDownload, highlightId, onClearHighlight }) => {
             const editor = allMembers.find(m => m.id === item.editedById) || { name: item.lastEdited || '同行隊友', avatarColor: '#94a3b8' };
             const districts = (item.districts || (item.district ? [item.district] : []));
             return (
-              <div key={item.id} id={`food-item-${item.id}`}
-                className={`bg-white border rounded-[2rem] p-5 shadow-sm hover:shadow-md transition-all ${expandedId === item.id ? 'border-orange-300 shadow-orange-100' : 'border-slate-100'}`}>
+              <div key={item.id} className="bg-white border border-slate-100 rounded-[2rem] p-5 shadow-sm hover:shadow-md transition-all">
                 {/* 右上按鈕 */}
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex flex-wrap gap-1.5 flex-1">
@@ -1750,7 +1653,7 @@ const CurrencyBadge = ({ amount, currency, type }) => {
 
 // ─── ShoppingPage ─────────────────────────────────────────────────────────────
 const ShoppingPage = ({ onDownload }) => {
-  const { allMembers, currentMember, shoppingList, setShoppingList, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shopOptions, setShopOptions } = useMember();
+  const { allMembers, currentMember, shoppingList, setShoppingList, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, walletDates, setWalletDates, shopOptions, setShopOptions } = useMember();
 
   // ── shopOptions 安全取值 ──
   const citiesPool = shopOptions?.cities || [];
@@ -1836,25 +1739,7 @@ const ShoppingPage = ({ onDownload }) => {
         if (i.note) text += `備註: ${i.note}\n`;
         text += '--\n';
       });
-      const allItems = Array.isArray(shoppingList) ? shoppingList : [];
-      const rows = [['名稱', '城市', '商場', '地區', '許願者', '狀態', '購買日期', '價格', '幣別', '記入', '備註']];
-      allItems.forEach(item => {
-        const member = (allMembers || []).find(m => m.id === item.memberId);
-        rows.push([
-          item.name || '',
-          item.city || '',
-          item.mall || '',
-          item.location || '',
-          member?.name || '',
-          item.isBought ? '已買' : '未買',
-          item.boughtAt || '',
-          item.price || '',
-          item.currency || '',
-          item.recordedIn || '',
-          item.note || '',
-        ]);
-      });
-      downloadCSV(rows, `購物清單_${new Date().toLocaleDateString('zh-TW')}`);
+      downloadTextFile(text, `Shopping_${selectedCity}`);
     });
   }, [filteredList, selectedCity, selectedMemberId, allMembers, onDownload]);
 
@@ -1862,105 +1747,32 @@ const ShoppingPage = ({ onDownload }) => {
     setConfirmDel({
       fn: () => {
         if (item.walletRecordId) {
-          if (item.recordedIn === '共用錢包') {
-            setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
-          } else if (item.recordedIn === '個人記帳') {
-            // 刪付款者的帳務記錄
-            setAllPersonalWallets(prev => {
-              const next = { ...prev };
-              Object.keys(next).forEach(memberId => {
-                if (Array.isArray(next[memberId])) {
-                  next[memberId] = next[memberId].filter(w => w.id !== item.walletRecordId && w.walletItemId !== item.walletRecordId);
-                }
-              });
-              return next;
-            });
-            // 刪 splitRecords
-            setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.walletRecordId));
-          }
+          if (item.recordedIn === '共用錢包') setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
+          else if (item.recordedIn === '個人記帳') setPersonalWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
         }
         setShoppingList(p => p.filter(s => s.id !== item.id));
       }
     });
   };
 
-  const handleConfirmBought = (price, currency, target, rawDate, payerId) => {
+  const handleConfirmBought = (price, currency, target) => {
     const now = new Date();
-    const dateStr = rawDate
-      ? rawDate.split('-').slice(1).join('/')
-      : `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}`;
+    const dateStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}`;
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
     let walletRecordId = null;
-    const actualPayerId = payerId || currentMember?.id || '';
-    const itemOwnerId = boughtModal?.memberId || '';
-
+    
+    // 陣列防護加強
     if (!(Array.isArray(walletDates) ? walletDates : []).includes(dateStr)) setWalletDates(prev => [...(Array.isArray(prev) ? prev : []), dateStr].sort());
-
-    const isMarkOnly = target === '已計入共用錢包' || target === '已計入個人記帳';
-    if (!isMarkOnly && target !== '略過不記帳' && price && price !== '0') {
-      walletRecordId = now.getTime();
-      const record = { id: walletRecordId, name: `購買: ${boughtModal.name}`, type: '支出', amount: price, currency, date: dateStr, note: boughtModal.note || '自購物清單連動', editedById: actualPayerId, shoppingItemId: boughtModal.id, shoppingListItemId: boughtModal.id, createdAt: walletRecordId };
-
-      if (target === '共用錢包') {
-        // 自動把 forMemberIds 設為項目擁有者
-        const recordWithOwner = itemOwnerId
-          ? { ...record, forMemberIds: [itemOwnerId] }
-          : record;
-        setSharedWallet(p => [...(Array.isArray(p) ? p : []), recordWithOwner]);
-      }
-      else if (target === '個人記帳') {
-        // 寫進付款者的帳
-        setAllPersonalWallets(prev => {
-          const cur = prev[actualPayerId] || [];
-          return { ...prev, [actualPayerId]: [...cur, record] };
-        });
-
-        // 如果付款者不是項目擁有者 → 建立代墊記錄
-        if (actualPayerId !== itemOwnerId && itemOwnerId) {
-          const splitId = walletRecordId + 1;
-          const splitRecord = {
-            id: splitId,
-            walletItemId: walletRecordId,
-            payerId: actualPayerId,
-            receiverId: itemOwnerId,
-            amount: Number(price),
-            currency,
-            note: `購買: ${boughtModal.name}`,
-            createdAt: walletRecordId,
-            isSettled: false,
-            settledAt: null,
-          };
-          setSplitRecords(p => [...(Array.isArray(p) ? p : []), splitRecord]);
-          // 寫 proxy 進項目擁有者的帳
-          setAllPersonalWallets(prev => {
-            const cur = prev[itemOwnerId] || [];
-            return {
-              ...prev,
-              [itemOwnerId]: [...cur, {
-                id: walletRecordId + 2,
-                walletItemId: walletRecordId,
-                name: `購買: ${boughtModal.name}`,
-                type: '支出',
-                amount: Number(price),
-                currency,
-                date: dateStr,
-                note: boughtModal.note || '',
-                editedById: actualPayerId,
-                isProxyRecord: true,
-                createdAt: walletRecordId,
-              }],
-            };
-          });
-        }
-      }
+    
+    if (target !== '略過不記帳' && price && price !== '0') {
+      walletRecordId = Date.now();
+      const record = { id: walletRecordId, name: `購買: ${boughtModal.name}`, type: '支出', amount: price, currency, date: dateStr, note: boughtModal.note || '自購物清單連動', editedById: currentMember?.id || '', shoppingItemId: boughtModal.id, createdAt: Date.now() };
+      
+      // 陣列防護加強
+      if (target === '共用錢包') setSharedWallet(p => [...(Array.isArray(p) ? p : []), record]);
+      else if (target === '個人記帳') setPersonalWallet(p => [...(Array.isArray(p) ? p : []), record]);
     }
-    setShoppingList(p => p.map(s => s.id === boughtModal.id ? {
-      ...s, isBought: true, boughtAt: `${dateStr} ${timeStr}`, boughtAtMs: now.getTime(),
-      completedById: currentMember?.id || '', payerId: actualPayerId,
-      price: target === '略過不記帳' ? null : price,
-      currency: target === '略過不記帳' ? null : currency,
-      recordedIn: target === '略過不記帳' ? null : target, walletRecordId
-    } : s));
+    setShoppingList(p => p.map(s => s.id === boughtModal.id ? { ...s, isBought: true, boughtAt: `${dateStr} ${timeStr}`, boughtAtMs: now.getTime(), completedById: currentMember?.id || '', price: target === '略過不記帳' ? null : price, currency: target === '略過不記帳' ? null : currency, recordedIn: target === '略過不記帳' ? null : target, walletRecordId } : s));
     setBoughtModal(null);
   };
 
@@ -1968,24 +1780,10 @@ const ShoppingPage = ({ onDownload }) => {
     setConfirmDel({
       fn: () => {
         if (item.walletRecordId) {
-          if (item.recordedIn === '共用錢包') {
-            setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
-          } else if (item.recordedIn === '個人記帳') {
-            // 刪付款者的帳務記錄
-            setAllPersonalWallets(prev => {
-              const next = { ...prev };
-              Object.keys(next).forEach(memberId => {
-                if (Array.isArray(next[memberId])) {
-                  next[memberId] = next[memberId].filter(w => w.id !== item.walletRecordId && w.walletItemId !== item.walletRecordId);
-                }
-              });
-              return next;
-            });
-            // 刪 splitRecords
-            setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.walletRecordId));
-          }
+          if (item.recordedIn === '共用錢包') setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
+          else if (item.recordedIn === '個人記帳') setPersonalWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.walletRecordId));
         }
-        setShoppingList(p => p.map(s => s.id === item.id ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null } : s));
+        setShoppingList(p => p.map(s => s.id === item.id ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null } : s));
       },
       title: '取消購買紀錄',
       message: '此操作將同時刪除對應的帳務記錄，確定繼續嗎？'
@@ -2218,14 +2016,8 @@ const ShoppingPage = ({ onDownload }) => {
                   {/* 任何人都可以打勾，但只有自己能取消 */}
                   <button
                     onClick={() => {
-                      if (item.isBought) {
-                        // 誰打的勾誰能取消（completedById 是打勾者）
-                        const canUncheck = item.completedById === currentMember?.id || item.memberId === currentMember?.id;
-                        if (canUncheck) { handleUncheckBought(item); return; }
-                        return;
-                      }
-                      // 未打勾：打開 BoughtModal
-                      setBoughtModal(item); return;
+                      if (item.isBought && isMine) { handleUncheckBought(item); return; }
+                      if (!item.isBought) { setBoughtModal(item); return; }
                     }}
                     className={`w-9 h-9 rounded-2xl flex items-center justify-center border-2 transition-all shrink-0 ${item.isBought ? 'bg-pink-500 border-pink-500 text-white shadow-md' : 'bg-white border-pink-200 hover:border-pink-400 hover:bg-pink-50'}`}
                   >
@@ -2249,59 +2041,20 @@ const ShoppingPage = ({ onDownload }) => {
                 )}
 
                 {/* 已購買資訊 */}
-                {item.isBought && (() => {
-                  const payer = (allMembers || []).find(m => m.id === (item.payerId || item.completedById));
-                  const owner = (allMembers || []).find(m => m.id === item.memberId);
-                  // 只有計入個人記帳才算代墊，公費不算
-                  const isProxy = item.payerId && item.memberId && item.payerId !== item.memberId && item.recordedIn === '個人記帳';
-                  return (
-                    <div className="mt-2 space-y-1.5">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-pink-600 bg-pink-50 px-3 py-1.5 rounded-xl w-fit border border-pink-100 flex-wrap">
-                        <span>{item.boughtAt} 購入</span>
-                        {isProxy && (() => {
-                          const safeRecords = Array.isArray(splitRecords) ? splitRecords : [];
-                          const isSettled = safeRecords.some(r =>
-                            r.walletItemId === item.walletRecordId &&
-                            r.payerId === item.payerId &&
-                            r.receiverId === item.memberId &&
-                            r.isSettled
-                          );
-                          return (
-                            <span className={isSettled ? 'line-through text-slate-400' : 'text-violet-500'}>
-                              （{(allMembers || []).find(m => m.id === item.payerId)?.name || ''} 代墊）
-                            </span>
-                          );
-                        })()}
-                      </div>
-                      {item.recordedIn && (() => {
-                        // 從帳務即時讀金額
-                        const isMarkOnly = item.recordedIn === '已計入共用錢包' || item.recordedIn === '已計入個人記帳';
-                        let displayAmt = item.price;
-                        let displayCur = item.currency;
-                        if (!isMarkOnly && item.walletRecordId) {
-                          const allWallets = Object.values(allPersonalWallets || {}).flat().filter(Boolean);
-                          const walletRecord = item.recordedIn === '共用錢包'
-                            ? (Array.isArray(sharedWallet) ? sharedWallet : []).find(w => w.id === item.walletRecordId)
-                            : allWallets.find(w => w.id === item.walletRecordId);
-                          if (walletRecord) {
-                            displayAmt = walletRecord.amount;
-                            displayCur = walletRecord.currency;
-                          }
-                        }
-                        return (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                              {isMarkOnly ? '✓ ' : ''}計入 {item.recordedIn.replace('已計入', '')}
-                            </span>
-                            {!isMarkOnly && displayAmt && displayAmt !== '0' && (
-                              <CurrencyBadge amount={displayAmt} currency={displayCur} type="支出" />
-                            )}
-                          </div>
-                        );
-                      })()}
+                {item.isBought && (
+                  <div className="mt-2 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-pink-600 bg-pink-50 px-3 py-1.5 rounded-xl w-fit border border-pink-100">
+                      <Avatar member={completer} className="w-4 h-4 rounded-md" />
+                      <span>{completer.name} 於 {item.boughtAt} 購入</span>
                     </div>
-                  );
-                })()}
+                    {item.recordedIn && item.price && item.price !== '0' && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">計入 {item.recordedIn}：</span>
+                        <CurrencyBadge amount={item.price} currency={item.currency} type="支出" />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* 底部：許願者 + 導航 */}
                 <div className="flex items-center justify-between border-t border-slate-50 pt-3 mt-3">
@@ -2615,7 +2368,7 @@ const ShoppingPage = ({ onDownload }) => {
         ))}
       </Modal>
 
-      <BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} allMembers={allMembers} currentMember={currentMember} itemOwner={boughtModal?.memberId} />
+      <BoughtModal isOpen={!!boughtModal} onClose={() => setBoughtModal(null)} onConfirm={handleConfirmBought} />
       <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} title={confirmDel?.title} message={confirmDel?.message} />
       <PhotoViewerModal isOpen={!!viewerPhotos} onClose={() => setViewerPhotos(null)} photos={viewerPhotos} initialIndex={viewerIndex} />
     </div>
@@ -2623,18 +2376,13 @@ const ShoppingPage = ({ onDownload }) => {
 };
 
 // ─── BoughtModal ──────────────────────────────────────────────────────────────
-const BoughtModal = ({ isOpen, onClose, onConfirm, allMembers, currentMember, itemOwner }) => {
+const BoughtModal = ({ isOpen, onClose, onConfirm }) => {
   const [price, setPrice] = useState('');
   const [currency, setCurrency] = useState('JPY');
   const [isCalcOpen, setIsCalcOpen] = useState(false);
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}-${today.getDate().toString().padStart(2, '0')}`;
-  const [date, setDate] = useState(todayStr);
-  const [payerId, setPayerId] = useState(currentMember?.id || '');
-  const [selectedTarget, setSelectedTarget] = useState(null); // 追蹤選了哪個按鈕
-
+  
   if (!isOpen) return null;
-
+  
   return (
     <div className="fixed inset-0 z-[250] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={onClose} />
@@ -2644,11 +2392,6 @@ const BoughtModal = ({ isOpen, onClose, onConfirm, allMembers, currentMember, it
           <button onClick={onClose} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 active:scale-90 transition-all"><X size={20} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-6 space-y-4 no-scrollbar bg-slate-50/50">
-          <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">購買日期</p>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-2xl h-12 px-3 font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-pink-100 transition-all shadow-sm" />
-          </div>
           <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end">
             <div className="flex-1">
               <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
@@ -2669,47 +2412,11 @@ const BoughtModal = ({ isOpen, onClose, onConfirm, allMembers, currentMember, it
               <button onClick={() => setPrice(p => p.slice(0, -1))} className="h-12 bg-slate-100 border border-slate-200 rounded-2xl font-bold text-slate-600 flex items-center justify-center active:scale-90 transition-transform hover:bg-slate-200"><Delete size={22} /></button>
             </div>
           )}
-          {/* 有連動 */}
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">記帳並連動</p>
-          <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => onConfirm(price || '0', currency, '共用錢包', date, currentMember?.id)} className="py-3.5 bg-pink-500 text-white rounded-2xl font-bold text-sm shadow-md active:scale-95 hover:bg-pink-600 transition-colors">計入共用錢包</button>
-            <button onClick={() => setSelectedTarget(selectedTarget === '個人記帳' ? null : '個人記帳')}
-              className={`py-3.5 rounded-2xl font-bold text-sm shadow-md active:scale-95 transition-colors ${selectedTarget === '個人記帳' ? 'bg-violet-700 text-white' : 'bg-violet-500 text-white hover:bg-violet-600'}`}>
-              計入個人記帳 {selectedTarget === '個人記帳' ? '▲' : '▼'}
-            </button>
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <button onClick={() => onConfirm(price || '0', currency, '共用錢包')} className="py-4 bg-pink-500 text-white rounded-2xl font-bold text-sm shadow-md active:scale-95 hover:bg-pink-600 transition-colors">計入共用錢包</button>
+            <button onClick={() => onConfirm(price || '0', currency, '個人記帳')} className="py-4 bg-violet-500 text-white rounded-2xl font-bold text-sm shadow-md active:scale-95 hover:bg-violet-600 transition-colors">計入個人記帳</button>
           </div>
-          {selectedTarget === '個人記帳' && (
-            <div className="space-y-3">
-              <div>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">誰付的錢</p>
-                <div className="flex flex-wrap gap-2">
-                  {(allMembers || []).map(m => (
-                    <button key={m.id} type="button"
-                      onClick={() => setPayerId(m.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${payerId === m.id ? 'bg-violet-500 text-white border-violet-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
-                      {m.id === currentMember?.id ? `${m.name}（我）` : m.name}
-                    </button>
-                  ))}
-                </div>
-                {payerId && payerId !== itemOwner && (
-                  <p className="text-[10px] text-violet-500 font-bold mt-1.5">
-                    ⚠️ {(allMembers || []).find(m => m.id === payerId)?.name || '我'} 幫 {(allMembers || []).find(m => m.id === itemOwner)?.name || '許願者'} 代墊
-                  </p>
-                )}
-              </div>
-              <button onClick={() => onConfirm(price || '0', currency, '個人記帳', date, payerId)}
-                className="w-full py-3.5 bg-violet-600 text-white rounded-2xl font-bold text-sm shadow-md active:scale-95 hover:bg-violet-700 transition-colors">
-                確認計入個人記帳
-              </button>
-            </div>
-          )}
-          {/* 純標記 */}
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">已記帳（純標記）</p>
-          <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => onConfirm('0', currency, '已計入共用錢包', date, currentMember?.id)} className="py-3.5 bg-white text-pink-500 rounded-2xl font-bold text-sm border border-pink-200 active:scale-95 hover:bg-pink-50 transition-colors">✓ 已計入共用錢包</button>
-            <button onClick={() => onConfirm('0', currency, '已計入個人記帳', date, currentMember?.id)} className="py-3.5 bg-white text-violet-500 rounded-2xl font-bold text-sm border border-violet-200 active:scale-95 hover:bg-violet-50 transition-colors">✓ 已計入個人記帳</button>
-          </div>
-          <button onClick={() => onConfirm('0', currency, '略過不記帳', date, currentMember?.id)} className="w-full py-3.5 bg-white text-slate-400 rounded-2xl font-bold text-sm border border-slate-200 active:scale-95 hover:bg-slate-50 transition-colors">略過不記帳</button>
+          <button onClick={() => onConfirm(price || '0', currency, '略過不記帳')} className="w-full py-4 bg-white text-slate-500 rounded-2xl font-bold text-sm uppercase tracking-widest active:scale-95 border border-slate-200 mt-2 shadow-sm hover:bg-slate-50 transition-colors">略過不記帳（僅標記已買）</button>
         </div>
       </div>
     </div>
@@ -2741,41 +2448,7 @@ const useExchangeRates = () => {
   return { rates, updatedAt };
 };
 
-// ─── 債務簡化算法（按幣別分開）─────────────────────────────────────────────────
-const simplifyDebtsByCurrency = (records, members) => {
-  const currencies = ['JPY', 'KRW', 'TWD'];
-  const allTransfers = []; // { from, to, amount, currency }
-
-  currencies.forEach(cur => {
-    const balance = {};
-    members.forEach(m => { balance[m.id] = 0; });
-    (records || []).filter(r => r.currency === cur && !r.isSettled).forEach(r => {
-      balance[r.payerId] = (balance[r.payerId] || 0) + (Number(r.amount) || 0);
-      balance[r.receiverId] = (balance[r.receiverId] || 0) - (Number(r.amount) || 0);
-    });
-    const creditors = [], debtors = [];
-    Object.entries(balance).forEach(([id, amt]) => {
-      if (amt > 0.5) creditors.push({ id, amt });
-      else if (amt < -0.5) debtors.push({ id, amt: -amt });
-    });
-    creditors.sort((a, b) => b.amt - a.amt);
-    debtors.sort((a, b) => b.amt - a.amt);
-    const c = creditors.map(x => ({ ...x }));
-    const d = debtors.map(x => ({ ...x }));
-    let i = 0, j = 0;
-    while (i < c.length && j < d.length) {
-      const amount = Math.min(c[i].amt, d[j].amt);
-      if (amount > 0.5) allTransfers.push({ from: d[j].id, to: c[i].id, amount: Math.round(amount), currency: cur });
-      c[i].amt -= amount; d[j].amt -= amount;
-      if (c[i].amt < 0.5) i++;
-      if (d[j].amt < 0.5) j++;
-    }
-  });
-
-  return allTransfers;
-};
-
-// 舊的保留給公費結算用（換算 TWD）
+// ─── 債務簡化算法 ─────────────────────────────────────────────────────────────
 const simplifyDebts = (records, members, rates) => {
   const toTWD = (amount, currency) => Math.round(amount * (rates?.[currency] || 1));
   const balance = {};
@@ -2807,27 +2480,9 @@ const simplifyDebts = (records, members, rates) => {
 };
 
 // ─── 公費結算視窗元件 ─────────────────────────────────────────────────────────
-const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, balance, getMemberDetail, rates, toTWD, SYM, currencyConfig, onClose, onSettle, updatedAt }) => {
+const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, balance, getMemberDetail, rates, toTWD, SYM, currencyConfig, onClose }) => {
   const [expandedId, setExpandedId] = useState(null);
-  // settledCurs: { [memberId]: Set of settled currencies }
-  const [settledCurs, setSettledCurs] = useState({});
-
-  const isCurSettled = (memberId, cur) => {
-    try { return !!(settledCurs[memberId]?.has(cur)); } catch(e) { return false; }
-  };
-
-  const handleSettle = (m, cur, amt) => {
-    // 寫回共用錢包
-    onSettle(m, cur, amt);
-    // 標記該幣別已結清
-    setSettledCurs(prev => {
-      const next = { ...prev };
-      if (!next[m.id]) next[m.id] = new Set();
-      else next[m.id] = new Set(next[m.id]);
-      next[m.id].add(cur);
-      return next;
-    });
-  };
+  const [settledIds, setSettledIds] = useState(new Set());
 
   return (
     <div className="fixed inset-0 z-[300] flex items-end justify-center">
@@ -2838,7 +2493,7 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-black text-slate-800">公費結算</h3>
-              <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}・<span className={updatedAt === '使用預設匯率' ? 'text-amber-400' : 'text-emerald-400'}>{updatedAt}</span></p>
+              <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}</p>
             </div>
             <button onClick={onClose} className="p-2 bg-slate-100 rounded-full text-slate-500"><X size={18} /></button>
           </div>
@@ -2884,86 +2539,65 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
             <div className="space-y-2">
               {(allMembers || []).map(m => {
                 const bal = memberBalance[m.id] || {};
+                const isExpanded = expandedId === m.id;
+                const isSettled = settledIds.has(m.id);
                 const detail = getMemberDetail(m.id);
-                const currencies = ['JPY', 'KRW', 'TWD'].filter(cur => bal[cur] !== 0);
-                const allSettled = currencies.length > 0 && currencies.every(cur => isCurSettled(m.id, cur));
-
-                // 明細按幣別分組
-                const detailByCur = { JPY: [], KRW: [], TWD: [] };
-                detail.forEach(d => { if (detailByCur[d.currency]) detailByCur[d.currency].push(d); });
+                const currencies = ['KRW', 'JPY', 'TWD'].filter(cur => bal[cur] !== 0);
 
                 return (
-                  <div key={m.id} className={`bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm transition-opacity ${allSettled ? 'opacity-50' : ''}`}>
-                    {/* 頭部：名字 */}
-                    <div className="px-4 pt-3.5 pb-2 flex items-center gap-3">
+                  <div key={m.id} className={`bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm transition-opacity ${isSettled ? 'opacity-50' : ''}`}>
+                    {/* 主要行 */}
+                    <div className="px-4 py-3.5 flex items-center gap-3">
                       <Avatar member={m} className="w-8 h-8 rounded-xl text-sm shrink-0" />
-                      <p className="text-sm font-black text-slate-800">{m.name}</p>
-                      {allSettled && <span className="ml-auto text-[10px] font-black text-emerald-500">✓ 全部結清</span>}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-black text-slate-800">{m.name}</p>
+                        <div className="flex gap-2 flex-wrap mt-0.5">
+                          {currencies.length > 0 ? currencies.map(cur => {
+                            const amt = bal[cur];
+                            return (
+                              <div key={cur}>
+                                <span className={`text-sm font-black ${amt >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                  {amt >= 0 ? '+' : ''}{SYM[cur]}{Math.abs(amt).toLocaleString()}
+                                </span>
+                                <span className="text-[10px] text-slate-400 ml-1 block">
+                                  NT${toTWD(Math.abs(amt), cur).toLocaleString()}
+                                </span>
+                              </div>
+                            );
+                          }) : <span className="text-[10px] text-slate-400">無異動</span>}
+                        </div>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        {detail.length > 0 && (
+                          <button onClick={() => setExpandedId(isExpanded ? null : m.id)}
+                            className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-500 rounded-xl text-[10px] font-black border border-slate-200 transition-colors">
+                            明細 {isExpanded ? '▲' : '▼'}
+                          </button>
+                        )}
+                        <button onClick={() => setSettledIds(p => { const n = new Set(p); isSettled ? n.delete(m.id) : n.add(m.id); return n; })}
+                          className={`px-2.5 py-1.5 rounded-xl text-[10px] font-black border transition-colors ${isSettled ? 'bg-emerald-100 text-emerald-600 border-emerald-200' : 'bg-slate-50 hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 border-slate-200'}`}>
+                          {isSettled ? '✓ 結清' : '結算'}
+                        </button>
+                      </div>
                     </div>
 
-                    {/* 每個幣別一個區塊 */}
-                    {currencies.length === 0 && (
-                      <div className="px-4 pb-3 text-[10px] text-slate-400">無異動</div>
-                    )}
-                    {currencies.map((cur, idx) => {
-                      const amt = bal[cur];
-                      const settled = isCurSettled(m.id, cur);
-                      const isOwed = amt < 0;
-                      const c = (currencyConfig || {})[cur] || (currencyConfig || {}).TWD || { bg: 'bg-slate-50', border: 'border-slate-200', badge: 'bg-slate-400', text: 'text-slate-600', textLight: 'text-slate-400' };
-                      const curDetail = detailByCur[cur] || [];
-                      const expandKey = `${m.id}-${cur}`;
-                      const isCurExpanded = expandedId === expandKey;
-
-                      return (
-                        <div key={cur} className={`mx-3 mb-2 rounded-2xl border ${settled ? 'border-emerald-100 bg-emerald-50/50' : `${c.border} ${c.bg}`} overflow-hidden transition-all`}>
-                          {/* 幣別列：金額 + 展開 + 結清 */}
-                          <div className="flex items-center gap-2 px-3 py-2.5">
-                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full text-white ${c.badge}`}>{cur}</span>
-                            <span className={`text-sm font-black flex-1 ${settled ? 'text-emerald-400 line-through' : amt >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                              {amt >= 0 ? '+' : ''}{(SYM || {})[cur] || ''}{Math.abs(amt || 0).toLocaleString()}
-                              <span className="text-[10px] text-slate-400 font-bold ml-1 no-underline" style={{textDecoration:'none'}}>≈ NT${toTWD ? toTWD(Math.abs(amt || 0), cur).toLocaleString() : ''}</span>
-                            </span>
-                            {curDetail.length > 0 && (
-                              <button onClick={() => setExpandedId(isCurExpanded ? null : expandKey)}
-                                className="text-[10px] font-black text-slate-400 hover:text-slate-600 px-2 py-1 rounded-lg hover:bg-white/60 transition-colors">
-                                明細 {isCurExpanded ? '▲' : '▼'}
-                              </button>
-                            )}
-                            <button
-                              disabled={settled}
-                              onClick={() => handleSettle(m, cur, Math.abs(amt))}
-                              className={`text-[10px] font-black px-2.5 py-1 rounded-xl border transition-all active:scale-95
-                                ${settled
-                                  ? 'bg-emerald-100 text-emerald-400 border-emerald-100 cursor-default'
-                                  : isOwed
-                                    ? 'bg-red-500 text-white border-red-500 hover:bg-red-600'
-                                    : 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600'
-                                }`}>
-                              {settled ? '✓ 結清' : isOwed ? '⬆︎ 補繳' : '⬇︎ 退回'}
-                            </button>
-                          </div>
-
-                          {/* 該幣別明細 */}
-                          {isCurExpanded && curDetail.length > 0 && (
-                            <div className="border-t border-white/60 px-3 py-2 space-y-1.5 bg-white/40">
-                              {curDetail.map((d, i) => (
-                                <div key={i} className="flex items-center gap-2">
-                                  <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.type === 'in' ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                                  <div className="flex-1 min-w-0">
-                                    <span className="text-[11px] font-bold text-slate-600 truncate block">{d.name}</span>
-                                    <span className="text-[10px] text-slate-400">{d.date}</span>
-                                  </div>
-                                  <span className={`text-[11px] font-black shrink-0 ${d.type === 'in' ? 'text-emerald-600' : 'text-red-500'}`}>
-                                    {d.type === 'in' ? '+' : '-'}{SYM[cur]}{d.amount.toLocaleString()}
-                                  </span>
-                                </div>
-                              ))}
+                    {/* 展開明細 */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-50 px-4 pb-3 pt-2 space-y-1.5">
+                        {detail.map((d, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.type === 'in' ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                            <div className="flex-1 min-w-0">
+                              <span className="text-[11px] font-bold text-slate-600">{d.name}</span>
+                              <span className="text-[10px] text-slate-400 ml-1">{d.date}</span>
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <div className="h-1" />
+                            <span className={`text-[11px] font-black shrink-0 ${d.type === 'in' ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {d.type === 'in' ? '+' : '-'}{SYM[d.currency]}{d.amount.toLocaleString()}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2977,7 +2611,7 @@ const PoolSettlementView = ({ allMembers, memberBalance, totalIn, totalOut, bala
 
 // ─── WalletTab ────────────────────────────────────────────────────────────────
 const WalletTab = ({ onDownload }) => {
-  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, setAllPersonalWallets, splitRecords, setSplitRecords, walletDates, setWalletDates, shoppingList, setShoppingList, customRates } = useMember();
+  const { allMembers, currentMember, sharedWallet, setSharedWallet, personalWallet, setPersonalWallet, allPersonalWallets, splitRecords, setSplitRecords } = useMember();
   const [viewMemberId, setViewMemberId] = useState(currentMember?.id || '');
   const [subTab, setSubTab] = useState('共用錢包');
   const [modal, setModal] = useState({ type: null, data: null });
@@ -2987,9 +2621,7 @@ const WalletTab = ({ onDownload }) => {
   const [showSettlement, setShowSettlement] = useState(false);
   const [showPoolSettlement, setShowPoolSettlement] = useState(false);
   const [transferStates, setTransferStates] = useState({});
-  const [walletError, setWalletError] = useState(null);
-  const { rates: autoRates, updatedAt } = useExchangeRates();
-  const rates = { TWD: 1, JPY: customRates?.JPY || autoRates.JPY, KRW: customRates?.KRW || autoRates.KRW };
+  const { rates, updatedAt } = useExchangeRates();
   const toTWD = useCallback((amount, currency) => Math.round(amount * (rates[currency] || 1)), [rates]);
   const SYM = { KRW: '₩', JPY: '¥', TWD: '$' };
 
@@ -2999,17 +2631,19 @@ const WalletTab = ({ onDownload }) => {
     }
   }, [currentMember?.id]);
 
-  // 個人記帳只顯示自己的帳（含別人寫進來的代墊記錄 isProxyRecord）
-  const myPersonalWallet = useMemo(() => {
-    return Array.isArray(personalWallet) ? personalWallet : [];
-  }, [personalWallet]);
+  const viewPersonalWallet = useMemo(() => {
+    if (!allPersonalWallets || !viewMemberId) return EMPTY_ARRAY;
+    return allPersonalWallets[viewMemberId] || EMPTY_ARRAY;
+  }, [allPersonalWallets, viewMemberId]);
 
+  const isOwner = viewMemberId === currentMember?.id;
+  
   const activeWallet = useMemo(() => {
-    const w = subTab === '共用錢包' ? sharedWallet : myPersonalWallet;
+    const w = subTab === '共用錢包' ? sharedWallet : viewPersonalWallet;
     return Array.isArray(w) ? w : EMPTY_ARRAY;
-  }, [subTab, sharedWallet, myPersonalWallet]);
+  }, [subTab, sharedWallet, viewPersonalWallet]);
 
-  const setActiveWallet = subTab === '共用錢包' ? setSharedWallet : setPersonalWallet;
+  const setActiveWallet = subTab === '共用錢包' ? setSharedWallet : (isOwner ? setPersonalWallet : () => {});
 
   const visibleWalletDates = useMemo(() => {
     if (!Array.isArray(activeWallet)) return EMPTY_ARRAY;
@@ -3020,14 +2654,6 @@ const WalletTab = ({ onDownload }) => {
     const today = new Date();
     return `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
   });
-
-  const handleSubTabChange = (tab) => {
-    setSubTab(tab);
-    setSelectedDate(() => {
-      const today = new Date();
-      return `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
-    });
-  };
 
   useEffect(() => {
     if (visibleWalletDates.length > 0 && !visibleWalletDates.includes(selectedDate)) {
@@ -3040,8 +2666,6 @@ const WalletTab = ({ onDownload }) => {
     if (Array.isArray(activeWallet)) {
       activeWallet.forEach(item => {
         if (!item) return;
-        // 個人記帳：排除代墊記錄（別人幫我代墊，不算我的現金流）
-        if (subTab === '個人記帳' && item.isProxyRecord) return;
         const amt = Number(item.amount) || 0;
         if (totals[item.currency] !== undefined) {
           if (item.type === '存入') totals[item.currency] += amt; else totals[item.currency] -= amt;
@@ -3049,7 +2673,7 @@ const WalletTab = ({ onDownload }) => {
       });
     }
     return totals;
-  }, [activeWallet, subTab]);
+  }, [activeWallet]);
 
   const filteredWalletItems = useMemo(() => {
     if (!Array.isArray(activeWallet)) return EMPTY_ARRAY;
@@ -3063,8 +2687,6 @@ const WalletTab = ({ onDownload }) => {
     if (Array.isArray(filteredWalletItems)) {
       filteredWalletItems.forEach(item => {
         if (!item) return;
-        // 個人記帳：排除代墊記錄
-        if (subTab === '個人記帳' && item.isProxyRecord) return;
         const amt = Number(item.amount) || 0;
         if (sum[item.currency] !== undefined) {
           if (item.type === '存入') sum[item.currency] += amt; else sum[item.currency] -= amt;
@@ -3072,128 +2694,12 @@ const WalletTab = ({ onDownload }) => {
       });
     }
     return sum;
-  }, [filteredWalletItems, subTab, currentMember?.id]);
+  }, [filteredWalletItems]);
 
   const handleDeleteWalletItem = (item) => {
     if (!item) return;
-    setConfirmDel({ fn: () => {
-      if (item.isProxyRecord) {
-        // C 刪除自己的 proxy 記錄
-        // 1. 刪掉自己的 proxy 卡片
-        setActiveWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.id));
-        // 2. 找到這筆的 splitRecord，取得 C 應付的金額
-        const myRecord = (Array.isArray(splitRecords) ? splitRecords : [])
-          .find(r => r.walletItemId === item.walletItemId && r.receiverId === currentMember?.id);
-        const myAmount = myRecord ? (Number(myRecord.amount) || 0) : 0;
-        // 3. 標記 splitRecord 為 deletedByReceiver
-        setSplitRecords(p => (Array.isArray(p) ? p : []).map(r =>
-          r.walletItemId === item.walletItemId && r.receiverId === currentMember?.id
-            ? { ...r, deletedByReceiver: true, isSettled: true, settledAt: Date.now() }
-            : r
-        ));
-        // 4. 修改 A（付款者）的帳務記錄金額，扣掉 C 那份；若歸零則刪掉
-        if (myAmount > 0 && item.walletItemId) {
-          const payerId = item.editedById;
-          setAllPersonalWallets(prev => {
-            const next = { ...prev };
-            if (next[payerId]) {
-              next[payerId] = next[payerId].reduce((acc, w) => {
-                if (w.id !== item.walletItemId) { acc.push(w); return acc; }
-                const newAmt = Math.max(0, (Number(w.amount) || 0) - myAmount);
-                if (newAmt > 0) acc.push({ ...w, amount: newAmt });
-                // 金額歸零就不加入（相當於刪除）
-                return acc;
-              }, []);
-            }
-            return next;
-          });
-        }
-        // 5. 如果原始帳務是來自購物清單，還原購物打勾
-        const originalRecord = (Array.isArray(splitRecords) ? splitRecords : [])
-          .find(r => r.walletItemId === item.walletItemId);
-        if (originalRecord) {
-          setShoppingList(p => (Array.isArray(p) ? p : []).map(s =>
-            s.walletRecordId === item.walletItemId
-              ? { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null }
-              : s
-          ));
-        }
-      } else {
-        // 正常刪除：連同 splitRecords 和 proxy 記錄一起刪
-        setActiveWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.id));
-        setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.id));
-        setAllPersonalWallets(prev => {
-          const next = { ...prev };
-          Object.keys(next).forEach(memberId => {
-            if (Array.isArray(next[memberId])) {
-              next[memberId] = next[memberId].filter(w => w.walletItemId !== item.id);
-            }
-          });
-          return next;
-        });
-        // 如果是結清卡片（isSettlement），把對方的配對卡片也刪掉，並還原 splitRecords
-        if (item.isSettlement) {
-          const pairedId = item.id % 2 === 0 ? item.id + 1 : item.id - 1;
-          // 刪對方的配對卡片
-          setAllPersonalWallets(prev => {
-            const next = { ...prev };
-            Object.keys(next).forEach(memberId => {
-              if (Array.isArray(next[memberId])) {
-                next[memberId] = next[memberId].filter(w => w.id !== pairedId);
-              }
-            });
-            return next;
-          });
-          // 還原相關的 splitRecords（用 settlementCardId 精確配對）
-          const cardId = item.id;
-          const pairedCardId2 = item.id % 2 === 0 ? item.id + 1 : item.id - 1;
-          setSplitRecords(p => (Array.isArray(p) ? p : []).map(r => {
-            if (r.isSettled && (r.settlementCardId === cardId || r.settlementCardId === pairedCardId2)) {
-              return { ...r, isSettled: false, settledAt: null, settlementCardId: null };
-            }
-            return r;
-          }));
-        }
-        // 刪帳務後，如果那天已無帳務，自動移除日期 Tab
-        const itemDate = item.date;
-        if (itemDate) {
-          setTimeout(() => {
-            setWalletDates(prev => {
-              const remaining = (Array.isArray(activeWallet) ? activeWallet : []).filter(w => w.id !== item.id && w.date === itemDate);
-              if (remaining.length === 0) {
-                return (Array.isArray(prev) ? prev : []).filter(d => d !== itemDate);
-              }
-              return prev;
-            });
-          }, 200);
-        }
-
-        // 不管共用或個人，只要有連動購物清單就還原
-        const itemId = String(item.id);
-        const shoppingItemId = item.shoppingItemId || item.shoppingListItemId;
-        setShoppingList(p => (Array.isArray(p) ? p : []).map(s => {
-          const match1 = shoppingItemId && String(s.id) === String(shoppingItemId);
-          const match2 = s.walletRecordId && String(s.walletRecordId) === itemId;
-          if (match1 || match2) {
-            return { ...s, isBought: false, completedById: null, boughtAt: null, boughtAtMs: null, price: null, currency: null, recordedIn: null, walletRecordId: null, payerId: null };
-          }
-          return s;
-        }));
-        // 共用錢包也要刪
-        setSharedWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.id));
-        // 同時清掉相關的 splitRecords 和 proxy
-        setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== item.id));
-        setAllPersonalWallets(prev => {
-          const next = { ...prev };
-          Object.keys(next).forEach(memberId => {
-            if (Array.isArray(next[memberId])) {
-              next[memberId] = next[memberId].filter(w => w.walletItemId !== item.id);
-            }
-          });
-          return next;
-        });
-      }
-    }});
+    // 陣列防護加強
+    setConfirmDel({ fn: () => setActiveWallet(p => (Array.isArray(p) ? p : []).filter(w => w.id !== item.id)) });
   };
 
   const handleDeleteDate = (d) => {
@@ -3212,10 +2718,8 @@ const WalletTab = ({ onDownload }) => {
         type: '支出',
         currency: 'JPY',
         date: dateForInput,
-        splitMembers: [],
-        splitIncludeSelf: true,
-        selfAmount: '',
-        sharedCustomAmts: {},
+        splitPayerId: null,
+        splitReceiverIds: [],
         contributorIds: subTab === '共用錢包' ? allMemberIds : [currentMember?.id],
         forMemberIds: subTab === '共用錢包' ? allMemberIds : [],
       }
@@ -3232,25 +2736,7 @@ const WalletTab = ({ onDownload }) => {
         if (!currentData || !currentData.filteredWalletItems) return;
         let text = `${currentData.subTab} - ${currentData.selectedDate}\n\n`;
         currentData.filteredWalletItems.forEach(i => { if (i) text += `[${i.type}] ${i.name} : ${i.currency} ${i.amount}\n`; if (i?.note) text += `備註: ${i.note}\n`; text += '--\n'; });
-        const isShared = currentData.subTab === '共用錢包';
-        const wallet = isShared
-          ? (Array.isArray(sharedWallet) ? sharedWallet : [])
-          : (Array.isArray(personalWallet) ? personalWallet : []);
-        // 排除結清卡片（isSettlement）和 proxy 卡片（isProxyRecord）
-        const filteredWallet = wallet.filter(item => item && !item.isSettlement && !item.isProxyRecord);
-        const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
-        filteredWallet.forEach(item => {
-          rows.push([
-            item.date || '',
-            item.type || '',
-            item.name || '',
-            item.currency || '',
-            item.amount || '',
-            item.note || '',
-          ]);
-        });
-        const label = isShared ? '共用錢包' : '個人記帳';
-        downloadCSV(rows, `帳務_${label}_${new Date().toLocaleDateString('zh-TW')}`);
+        downloadTextFile(text, `Wallet_${currentData.subTab}_${currentData.selectedDate.replace('/', '-')}`);
       });
     }
   }, [onDownload]);
@@ -3266,7 +2752,7 @@ const WalletTab = ({ onDownload }) => {
       <div className="px-4 pt-5 mb-4">
         <div className="flex bg-violet-50/50 p-1.5 rounded-[2rem] border border-violet-100 mb-5">
           {['共用錢包', '個人記帳'].map(t => (
-            <button key={t} type="button" onClick={() => handleSubTabChange(t)} className={`flex-1 py-2.5 text-sm font-bold rounded-2xl transition-all ${subTab === t ? 'bg-violet-500 text-white shadow-md' : 'text-violet-400 hover:text-violet-600'}`}>{t}</button>
+            <button key={t} type="button" onClick={() => setSubTab(t)} className={`flex-1 py-2.5 text-sm font-bold rounded-2xl transition-all ${subTab === t ? 'bg-violet-500 text-white shadow-md' : 'text-violet-400 hover:text-violet-600'}`}>{t}</button>
           ))}
         </div>
 
@@ -3283,32 +2769,48 @@ const WalletTab = ({ onDownload }) => {
           })}
         </div>
 
-        {/* 應收應付（只在個人記帳顯示）*/}
-        {subTab === '個人記帳' && (() => {
+        {/* 共用錢包結算按鈕 */}
+        {subTab === '共用錢包' && (
+          <button onClick={() => setShowPoolSettlement(true)}
+            className="w-full bg-violet-50 border border-violet-200 rounded-2xl px-4 py-3 flex items-center gap-3 hover:bg-violet-100 active:scale-95 transition-all shadow-sm mb-4">
+            <span className="text-lg">💰</span>
+            <div className="flex-1 text-left">
+              <p className="text-xs font-black text-violet-700">公費結算</p>
+              <p className="text-[10px] text-violet-400 mt-0.5">查看每人公費餘額與貢獻</p>
+            </div>
+            <span className="text-violet-400 text-sm">›</span>
+          </button>
+        )}
+
+        {/* 應收應付 + ⚠️ 未結清（只在個人記帳顯示）*/}
+        {subTab === '個人記帳' ? (() => {
           const safeRecords = Array.isArray(splitRecords) ? splitRecords : [];
-          const unsettled = safeRecords.filter(r => !r.isSettled);
-          // 按幣別算應收應付
+          const transfers = simplifyDebts(safeRecords, allMembers || [], rates);
+          const myReceivable = transfers.filter(t => t.to === currentMember?.id);
+          const myPayable = transfers.filter(t => t.from === currentMember?.id);
           const receivableByCur = {};
+          myReceivable.forEach(t => {
+            safeRecords.filter(r => r.payerId === currentMember?.id && r.receiverId === t.from).forEach(r => {
+              receivableByCur[r.currency] = (receivableByCur[r.currency] || 0) + r.amount;
+            });
+          });
           const payableByCur = {};
-          unsettled.forEach(r => {
-            if (r.payerId === currentMember?.id) {
-              receivableByCur[r.currency] = (receivableByCur[r.currency] || 0) + (Number(r.amount) || 0);
-            } else if (r.receiverId === currentMember?.id) {
-              payableByCur[r.currency] = (payableByCur[r.currency] || 0) + (Number(r.amount) || 0);
-            }
+          myPayable.forEach(t => {
+            safeRecords.filter(r => r.payerId === t.to && r.receiverId === currentMember?.id).forEach(r => {
+              payableByCur[r.currency] = (payableByCur[r.currency] || 0) + r.amount;
+            });
           });
           const hasAny = Object.keys(receivableByCur).length > 0 || Object.keys(payableByCur).length > 0;
           if (!hasAny) return null;
           return (
-            <div className="mb-4">
-              <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 flex gap-4 shadow-sm items-start">
+            <div className="space-y-2 mb-4">
+              <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 flex gap-4 shadow-sm">
                 {Object.keys(receivableByCur).length > 0 && (
                   <div className="flex-1">
                     <p className="text-[10px] font-black text-emerald-500 mb-1.5">💰 應收</p>
                     {Object.entries(receivableByCur).map(([cur, amt]) => (
                       <div key={cur} className="text-xs font-bold text-emerald-700">
-                        {SYM[cur]}{amt.toLocaleString()}
-                        <span className="text-[10px] text-slate-400 ml-1">≈ NT${toTWD(amt, cur).toLocaleString()}</span>
+                        {SYM[cur]}{amt.toLocaleString()} <span className="text-[10px] text-slate-400">≈ NT${toTWD(amt, cur).toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
@@ -3318,41 +2820,35 @@ const WalletTab = ({ onDownload }) => {
                     <p className="text-[10px] font-black text-red-500 mb-1.5">💸 應付</p>
                     {Object.entries(payableByCur).map(([cur, amt]) => (
                       <div key={cur} className="text-xs font-bold text-red-700">
-                        {SYM[cur]}{amt.toLocaleString()}
-                        <span className="text-[10px] text-slate-400 ml-1">≈ NT${toTWD(amt, cur).toLocaleString()}</span>
+                        {SYM[cur]}{amt.toLocaleString()} <span className="text-[10px] text-slate-400">≈ NT${toTWD(amt, cur).toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
                 )}
-                <button onClick={() => setShowSettlement(true)}
-                  className="flex-shrink-0 w-9 h-9 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-center hover:bg-amber-100 active:scale-90 transition-all shadow-sm"
-                  title="查看結算明細">
-                  <AlertTriangle size={18} className="text-amber-500" />
-                </button>
               </div>
+              <button onClick={() => setShowSettlement(true)}
+                className="w-full bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-3 hover:bg-amber-100 active:scale-95 transition-all shadow-sm">
+                <span className="text-lg">⚠️</span>
+                <div className="flex-1 text-left">
+                  <p className="text-xs font-black text-amber-700">還有未結清的代墊款項</p>
+                  <p className="text-[10px] text-amber-500 mt-0.5">點此查看結算明細</p>
+                </div>
+                <span className="text-amber-400 text-sm">›</span>
+              </button>
             </div>
           );
-        })()}
+        })() : null}
       </div>
 
       <div className="sticky top-0 z-30 px-4 pt-3 pb-3 bg-white/95 backdrop-blur-md border-y border-slate-100 mb-5 flex flex-col gap-3">
         {visibleWalletDates.length > 0 && (
-          <div className="flex items-center gap-2">
-            <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
-              {visibleWalletDates.map(d => (
-                <button key={d} type="button" onClick={() => setSelectedDate(d)} className={`flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-bold transition-all border flex items-center gap-1.5 ${selectedDate === d ? 'bg-violet-5 text-violet-600 border-violet-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>
-                  {d}
-                  <span onClick={e => { e.stopPropagation(); handleDeleteDate(d); }} className={`ml-1 transition-opacity ${selectedDate === d ? 'text-violet-400 hover:text-violet-600' : 'text-slate-300 hover:text-red-400'}`}><X size={14} /></span>
-                </button>
-              ))}
-            </div>
-            {subTab === '共用錢包' && (
-              <button onClick={() => setShowPoolSettlement(true)}
-                className="flex-shrink-0 w-9 h-9 bg-violet-50 hover:bg-violet-100 active:scale-90 border border-violet-200 rounded-2xl flex items-center justify-center transition-all shadow-sm"
-                title="公費結算">
-                <span className="text-lg leading-none">💰</span>
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+            {visibleWalletDates.map(d => (
+              <button key={d} type="button" onClick={() => setSelectedDate(d)} className={`flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-bold transition-all border flex items-center gap-1.5 ${selectedDate === d ? 'bg-violet-5 text-violet-600 border-violet-200 shadow-sm' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>
+                {d}
+                <span onClick={e => { e.stopPropagation(); handleDeleteDate(d); }} className={`ml-1 transition-opacity ${selectedDate === d ? 'text-violet-400 hover:text-violet-600' : 'text-slate-300 hover:text-red-400'}`}><X size={14} /></span>
               </button>
-            )}
+            ))}
           </div>
         )}
         <div className="flex gap-3 text-[10px] font-black uppercase tracking-widest bg-white py-2 px-4 rounded-full border border-slate-200 shadow-sm w-fit ml-auto">
@@ -3367,10 +2863,6 @@ const WalletTab = ({ onDownload }) => {
           if (!item) return null;
           const c = currencyConfig[item.currency] || currencyConfig.TWD;
           const isIncome = item.type === '存入';
-          // 存入=綠色，支出=紅色
-          const typeColor = isIncome ? 'text-blue-500 border-blue-200' : 'text-red-500 border-red-200';
-          const isSettlementCard = !!item.isSettlement;
-          const isProxyCard = !!item.isProxyRecord;
           const editor = (allMembers || []).find(m => m && m.id === item.editedById) || { name: item.lastEdited || '成員' };
           const allMemberIds = (allMembers || []).map(m => m.id);
 
@@ -3389,84 +2881,23 @@ const WalletTab = ({ onDownload }) => {
             }
           })();
 
-          // 個人記帳：代墊標籤
-          const splitLabel = (() => {
-            if (subTab !== '個人記帳') return null;
-            // 代墊記錄（別人幫我代墊）
-            if (item.isProxyRecord) {
-              const payerName = (allMembers || []).find(m => m.id === item.editedById)?.name || '某人';
-              return `${payerName} 幫我代墊`;
-            }
-            // 我幫別人代墊
-            const safeRecords = Array.isArray(splitRecords) ? splitRecords : [];
-            const related = safeRecords.filter(r => String(r.walletItemId) === String(item.id) && r.payerId === currentMember?.id);
-            if (related.length === 0) return null;
-            // 分開顯示：有刪除的用刪除線，正常的正常顯示，並帶金額
-            const SYM = { JPY: '¥', KRW: '₩', TWD: '$' };
-            const activeEntries = related.filter(r => !r.deletedByReceiver).map(r => ({
-              name: (allMembers || []).find(m => m.id === r.receiverId)?.name || '',
-              amount: r.amount,
-              currency: r.currency,
-            })).filter(e => e.name);
-            const deletedEntries = related.filter(r => r.deletedByReceiver).map(r => ({
-              name: (allMembers || []).find(m => m.id === r.receiverId)?.name || '',
-              amount: r.amount,
-              currency: r.currency,
-            })).filter(e => e.name);
-            if (activeEntries.length === 0 && deletedEntries.length === 0) return null;
-            return { activeEntries, deletedEntries };
-          })();
-
-
-
           return (
-            <div key={item.id} className={`relative p-4 rounded-2xl shadow-sm transition-shadow group ${isProxyCard ? 'bg-slate-100 border-slate-200' : `${c.bg} border ${c.border}`}`}>
+            <div key={item.id} className={`relative p-4 rounded-2xl shadow-sm transition-shadow group ${c.bg} border ${c.border}`}>
               <div className="absolute top-3 right-3 flex gap-1.5 z-10 opacity-80 hover:opacity-100 transition-opacity">
-                <>
-                    <button type="button" onClick={() => {
-                      const safeRecords = Array.isArray(splitRecords) ? splitRecords : [];
-                      const related = safeRecords.filter(r => String(r.walletItemId) === String(item.id) && r.payerId === currentMember?.id);
-                      const splitMembers = related.map(r => ({ id: r.receiverId, amount: '' }));
-                      const splitIncludeSelf = related.length === 0 || (() => {
-                        const totalAmt = Number(item.amount) || 0;
-                        const othersSum = related.reduce((s, r) => s + (Number(r.amount) || 0), 0);
-                        return othersSum < totalAmt;
-                      })();
-                      // 共用錢包預填 sharedCustomAmts
-                      setModal({ type: 'edit', data: { ...item, splitMembers, splitIncludeSelf, sharedCustomAmts: {} } });
-                    }} className="p-1.5 text-slate-500 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm"><Edit2 size={13} /></button>
+                {(subTab === '共用錢包' || isOwner) && (
+                  <>
+                    <button type="button" onClick={() => setModal({ type: 'edit', data: item })} className="p-1.5 text-slate-500 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm"><Edit2 size={13} /></button>
                     <button type="button" onClick={() => handleDeleteWalletItem(item)} className="p-1.5 text-red-500 bg-white hover:bg-red-100 rounded-lg transition-colors border border-red-200 shadow-sm"><Trash2 size={13} /></button>
                   </>
+                )}
               </div>
               
               <div className="pt-1 pr-14">
                 <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                   <span className={`${c.badge} text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm`}>{item.currency}</span>
-                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border bg-white ${isIncome ? 'text-blue-500 border-blue-200' : 'text-red-500 border-red-200'}`}>{item.type}</span>
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border bg-white ${isIncome ? 'text-red-500 border-red-200' : 'text-blue-500 border-blue-200'}`}>{item.type}</span>
                   {memberLabel && <span className="text-[10px] font-bold text-slate-500">{memberLabel}</span>}
-                  {isProxyCard && (
-                    <span className="text-[10px] font-bold text-slate-400 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">不計入總額</span>
-                  )}
-                  {splitLabel && (
-                    typeof splitLabel === 'string'
-                      ? <span className="text-[10px] font-bold text-violet-500 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded">{splitLabel}</span>
-                      : <div className="mt-1 space-y-0.5">
-                          {splitLabel.activeEntries.map((e, i) => (
-                            <div key={i} className="flex items-center gap-1">
-                              <span className="text-[10px] font-bold text-violet-500">幫 {e.name} 代墊</span>
-                              <span className="text-[10px] text-violet-400">{e.currency === 'JPY' ? '¥' : e.currency === 'KRW' ? '₩' : '$'}{Number(e.amount).toLocaleString()}</span>
-                            </div>
-                          ))}
-                          {splitLabel.deletedEntries.map((e, i) => (
-                            <div key={i} className="flex items-center gap-1">
-                              <span className="text-[10px] font-bold text-slate-400 line-through">幫 {e.name} 代墊</span>
-                              <span className="text-[10px] text-slate-300 line-through">{e.currency === 'JPY' ? '¥' : e.currency === 'KRW' ? '₩' : '$'}{Number(e.amount).toLocaleString()}</span>
-                            </div>
-                          ))}
-                        </div>
-                  )}
                 </div>
-
                 <h4 className="text-base font-bold text-slate-800 mb-1 leading-tight">{item.name}</h4>
                 {item.note && <p className="text-xs text-slate-600 italic bg-white/70 border-l-4 border-violet-200 p-2 rounded-r-xl mb-1.5">{item.note}</p>}
                 <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest flex items-center gap-1.5 mt-2">
@@ -3476,8 +2907,8 @@ const WalletTab = ({ onDownload }) => {
               </div>
 
               <div className="flex justify-end items-center gap-1.5 mt-2">
-                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-blue-500' : 'text-red-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
-                {isIncome ? <TrendingUp size={22} className="text-blue-400 opacity-80" /> : <TrendingDown size={22} className="text-red-400 opacity-80" />}
+                <p className={`text-xl font-black tracking-tight ${isIncome ? 'text-red-500' : 'text-blue-500'}`}>{isIncome ? '+' : '-'}{item.currency === 'JPY' ? '¥' : item.currency === 'KRW' ? '₩' : '$'}{Number(item.amount || 0).toLocaleString()}</p>
+                {isIncome ? <TrendingUp size={22} className="text-red-400 opacity-80" /> : <TrendingDown size={22} className="text-blue-300 opacity-80" />}
               </div>
             </div>
           );
@@ -3485,12 +2916,14 @@ const WalletTab = ({ onDownload }) => {
         {filteredWalletItems.length === 0 && <div className="py-20 text-center text-slate-400 text-xs font-bold uppercase tracking-widest italic opacity-80">此日尚無帳目</div>}
       </div>
 
-      <button type="button" onClick={handleAddClick} className="fixed bottom-[110px] right-6 w-16 h-16 bg-violet-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-violet-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
+      {(isOwner || subTab === '共用錢包') && (
+        <button type="button" onClick={handleAddClick} className="fixed bottom-[110px] right-6 w-16 h-16 bg-violet-500 text-white rounded-[2rem] shadow-lg flex items-center justify-center active:scale-90 z-[60] border-4 border-white hover:bg-violet-600 transition-colors"><Plus size={30} strokeWidth={3} /></button>
+      )}
 
       <Modal isOpen={!!modal.type} onClose={() => { setModal({ type: null, data: null }); setIsCalcOpen(false); }} title={modal.data?.id ? '編輯帳目' : '新增帳目'}>
         <FormField label="項目名稱" value={modal.data?.name} onChange={v => setModal({ ...modal, data: { ...modal.data, name: v } })} placeholder="如：機票公費、晚餐代墊" />
 
-        {/* 存入/支出 */}
+        {/* 存入/支出 — 顏色區分 */}
         <div className="flex bg-slate-50 p-1.5 rounded-2xl mb-4 shrink-0 border border-slate-100">
           {['存入', '支出'].map(t => (
             <button key={t} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, type: t } })}
@@ -3500,275 +2933,121 @@ const WalletTab = ({ onDownload }) => {
           ))}
         </div>
 
-        {/* 日期 + 幣別 */}
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <div>
-            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">日期</label>
-            <input type="date" value={(() => {
-              const d = modal.data?.date || '';
-              if (!d) return '';
-              if (d.includes('-') && d.startsWith('2')) return d; // yyyy-mm-dd
-              if (d.includes('/')) {
-                const parts = d.split('/');
-                if (parts.length === 2) return `2026-${parts[0]}-${parts[1]}`; // mm/dd
-                if (parts.length === 3) return `${parts[0]}-${parts[1]}-${parts[2]}`; // yyyy/mm/dd
-              }
-              return d;
-            })()} onChange={e => setModal({ ...modal, data: { ...modal.data, date: e.target.value } })} className="w-full bg-white border border-slate-200 rounded-2xl h-12 px-3 font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-violet-100 transition-all shadow-sm" />
-          </div>
-          <FormField label="幣別" type="select" options={['JPY', 'KRW', 'TWD']} value={modal.data?.currency} onChange={v => setModal({ ...modal, data: { ...modal.data, currency: v } })} />
-        </div>
-
-        {/* 金額 — 個人記帳（移到分攤前）*/}
-        {subTab === '個人記帳' && (
-          <>
-            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
-              <div className="flex-1">
-                <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
-                <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
-              </div>
-              <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
-            </div>
-            {isCalcOpen && (
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
-                  <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
-                ))}
-                <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
-              </div>
-            )}
-          </>
-        )}
-
-        {/* 分攤設定 — 個人記帳 */}
+        {/* 代墊設定 */}
         {subTab === '個人記帳' && (
           <div className="mb-3 bg-violet-50 rounded-2xl p-3 border border-violet-100">
-            <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest mb-2">👥 分攤成員（不選則為自己的帳）</p>
-            <div className="flex flex-wrap gap-2 mb-2">
+            <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest mb-2">💳 代墊設定（選填）</p>
+            <div className="mb-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">代墊人</label>
+              <select value={modal.data?.splitPayerId || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, splitPayerId: e.target.value || null, splitReceiverIds: [] } })}
+                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 font-bold text-slate-700 outline-none text-sm shadow-sm">
+                <option value="">無（自己的帳）</option>
+                {(allMembers || []).map(m => <option key={m.id} value={m.id}>{m.id === currentMember?.id ? `${m.name}（我）` : m.name}</option>)}
+              </select>
+            </div>
+            {modal.data?.splitPayerId && (
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 block">幫誰代墊（可多選）</label>
+                <div className="flex flex-wrap gap-2">
+                  {(allMembers || []).filter(m => m.id !== modal.data?.splitPayerId).map(m => {
+                    const selected = (modal.data?.splitReceiverIds || []).includes(m.id);
+                    return (
+                      <button key={m.id} type="button" onClick={() => {
+                        const cur = modal.data?.splitReceiverIds || [];
+                        const next = selected ? cur.filter(id => id !== m.id) : [...cur, m.id];
+                        setModal({ ...modal, data: { ...modal.data, splitReceiverIds: next } });
+                      }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${selected ? 'bg-violet-500 text-white border-violet-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
+                        {m.id === currentMember?.id ? `${m.name}（我）` : m.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                {(modal.data?.splitReceiverIds || []).length > 1 && modal.data?.amount && (
+                  <p className="text-[10px] text-violet-500 font-bold mt-2">
+                    每人 {Math.round(Number(modal.data.amount) / (modal.data.splitReceiverIds || []).length).toLocaleString()} {modal.data?.currency}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 共用錢包存入：多人平分 */}
+        {subTab === '共用錢包' && modal.data?.type === '存入' && (
+          <div className="mb-3 bg-red-50 rounded-2xl p-3 border border-red-100">
+            <p className="text-[10px] font-black text-red-400 uppercase tracking-widest mb-2">👥 選擇存入角色（預設全員）</p>
+            <div className="flex flex-wrap gap-2">
               {(allMembers || []).map(m => {
-                const splitMembers = modal.data?.splitMembers || [];
-                const isSelf = m.id === currentMember?.id;
-                const entry = splitMembers.find(s => s.id === m.id);
-                const selfIncluded = modal.data?.splitIncludeSelf !== false;
-                const selected = isSelf ? selfIncluded : !!entry;
+                const selected = (modal.data?.contributorIds || (allMembers || []).map(x => x.id)).includes(m.id);
                 return (
                   <button key={m.id} type="button" onClick={() => {
-                    if (isSelf) {
-                      setModal({ ...modal, data: { ...modal.data, splitIncludeSelf: !selfIncluded } });
-                    } else {
-                      const cur = modal.data?.splitMembers || [];
-                      const next = selected
-                        ? cur.filter(s => s.id !== m.id)
-                        : [...cur, { id: m.id, amount: '' }];
-                      setModal({ ...modal, data: { ...modal.data, splitMembers: next } });
-                    }
-                  }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${selected ? 'bg-violet-500 text-white border-violet-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-violet-50'}`}>
-                    {m.name}{isSelf ? '（我）' : ''}
+                    const cur = modal.data?.contributorIds || (allMembers || []).map(x => x.id);
+                    const next = selected ? cur.filter(id => id !== m.id) : [...cur, m.id];
+                    if (next.length === 0) return;
+                    setModal({ ...modal, data: { ...modal.data, contributorIds: next } });
+                  }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${selected ? 'bg-red-500 text-white border-red-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-red-50'}`}>
+                    {m.id === currentMember?.id ? `${m.name}（我）` : m.name}
                   </button>
                 );
               })}
             </div>
-            {(modal.data?.splitMembers || []).length > 0 && Number(modal.data?.amount) > 0 && (() => {
-              const splitMembers = modal.data?.splitMembers || [];
-              const selfIncluded = modal.data?.splitIncludeSelf !== false;
-              const totalAmt = Number(modal.data?.amount) || 0;
-              const filledMembers = splitMembers.filter(m => m.amount !== '' && !isNaN(Number(m.amount)));
-              const filledSum = filledMembers.reduce((s, m) => s + Number(m.amount), 0);
-              const selfCustomAmt = Number(modal.data?.selfAmount) || 0;
-              const selfHasCustom = modal.data?.selfAmount !== '' && modal.data?.selfAmount !== undefined && !isNaN(Number(modal.data?.selfAmount)) && modal.data?.selfAmount !== null;
-              const unfilledOthers = splitMembers.filter(m => m.amount === '' || isNaN(Number(m.amount))).length;
-              const filledSumWithSelf = filledSum + (selfHasCustom ? selfCustomAmt : 0);
-              const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
-              const remaining = Math.max(0, totalAmt - filledSumWithSelf);
-              const perUnfilled = unfilledCount > 0 ? Math.round((remaining / unfilledCount) * 10) / 10 : 0;
-              const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled) : 0;
-              const actualTotal = filledSumWithSelf + myAmt + unfilledOthers * perUnfilled;
-              const isOver = actualTotal > totalAmt + 1;
-              const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
-              return (
-                <div className="space-y-2 mt-2">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">自訂金額（不填則平分剩餘）</p>
-                  {selfIncluded && (
-                    <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-violet-100">
-                      <span className="text-xs font-black text-violet-600 flex-1">{(allMembers || []).find(m => m.id === currentMember?.id)?.name}（我）</span>
-                      <input
-                        type="number"
-                        value={modal.data?.selfAmount || ''}
-                        onChange={e => setModal({ ...modal, data: { ...modal.data, selfAmount: e.target.value } })}
-                        placeholder="選填"
-                        className="w-24 text-right text-xs font-bold text-violet-600 bg-transparent outline-none border-b border-violet-200 pb-0.5"
-                      />
-                      <span className="text-[10px] text-slate-400">{modal.data?.currency}</span>
-                    </div>
-                  )}
-                  {splitMembers.map(entry => {
-                    const member = (allMembers || []).find(m => m.id === entry.id);
-                    if (!member) return null;
-                    return (
-                      <div key={entry.id} className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-violet-100">
-                        <span className="text-xs font-black text-slate-700 flex-1">{member.name}</span>
-                        <input type="number" value={entry.amount}
-                          onChange={e => {
-                            const next = splitMembers.map(s => s.id === entry.id ? { ...s, amount: e.target.value } : s);
-                            setModal({ ...modal, data: { ...modal.data, splitMembers: next } });
-                          }}
-                          placeholder="選填"
-                          className="w-24 text-right text-xs font-bold text-violet-600 bg-transparent outline-none border-b border-violet-200 pb-0.5" />
-                        <span className="text-[10px] text-slate-400">{modal.data?.currency}</span>
-                      </div>
-                    );
-                  })}
-                  <div className={`flex items-center justify-between px-3 py-2 rounded-xl border ${isOver || isUnder ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-100'}`}>
-                    <span className="text-[10px] font-black text-slate-400">合計</span>
-                    <span className={`text-xs font-black ${isOver || isUnder ? 'text-red-500' : 'text-emerald-600'}`}>
-                      {modal.data?.currency} {actualTotal.toLocaleString()}{totalAmt > 0 && ` / ${totalAmt.toLocaleString()}`}
-                      {isOver && ' ⚠️ 超過'}{isUnder && ' ⚠️ 未達'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* 共用錢包金額 */}
-        {subTab === '共用錢包' && (
-          <>
-            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
-              <div className="flex-1">
-                <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
-                <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
-              </div>
-              <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
-            </div>
-            {isCalcOpen && (
-              <div className="grid grid-cols-3 gap-2 mb-3">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
-                  <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
-                ))}
-                <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
-              </div>
+            {(modal.data?.contributorIds || (allMembers || []).map(x => x.id)).length > 1 && modal.data?.amount && (
+              <p className="text-[10px] text-red-500 font-bold mt-2">
+                每人 {Math.round(Number(modal.data.amount) / (modal.data?.contributorIds || (allMembers || []).map(x => x.id)).length).toLocaleString()} {modal.data?.currency}
+              </p>
             )}
-          </>
-        )}
-
-        {/* 共用錢包：選角色 + 自訂金額 */}
-        {subTab === '共用錢包' && (() => {
-          const isIn = modal.data?.type === '存入';
-          const color = isIn ? 'red' : 'blue';
-          const ids = isIn
-            ? (modal.data?.contributorIds || (allMembers || []).map(x => x.id))
-            : (modal.data?.forMemberIds || (allMembers || []).map(x => x.id));
-          const customAmts = modal.data?.sharedCustomAmts || {};
-          const totalAmt = Number(modal.data?.amount) || 0;
-          const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-          const unfilledIds = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
-          const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
-          const startIdxDisplay = unfilledIds.length > 0 ? Math.abs((walletItemId || Date.now()) % unfilledIds.length) : 0;
-          const actualTotal = ids.reduce((s, id) => {
-            if (customAmts[id]) return s + Number(customAmts[id]);
-            const myIdx = unfilledIds.indexOf(id);
-            const adjustedIdx = (myIdx - startIdxDisplay + unfilledIds.length) % unfilledIds.length;
-            return s + perUnfilled + (adjustedIdx < remainder ? 1 : 0);
-          }, 0);
-          const isOver = actualTotal > totalAmt + 1;
-          const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
-          return (
-            <div className={`mb-3 bg-${color}-50 rounded-2xl p-3 border border-${color}-100`}>
-              <p className={`text-[10px] font-black text-${color}-400 uppercase tracking-widest mb-2`}>👥 {isIn ? '存入角色' : '支出角色'}（預設全員）</p>
-              <div className="flex flex-wrap gap-2 mb-2">
-                {(allMembers || []).map(m => {
-                  const selected = ids.includes(m.id);
-                  return (
-                    <button key={m.id} type="button" onClick={() => {
-                      const cur = ids;
-                      const next = selected ? cur.filter(id => id !== m.id) : [...cur, m.id];
-                      if (next.length === 0) return;
-                      const key = isIn ? 'contributorIds' : 'forMemberIds';
-                      setModal({ ...modal, data: { ...modal.data, [key]: next } });
-                    }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${selected ? `bg-${color}-500 text-white border-${color}-500` : 'bg-white text-slate-500 border-slate-200'}`}>
-                      {m.id === currentMember?.id ? `${m.name}（我）` : m.name}
-                    </button>
-                  );
-                })}
-              </div>
-              {ids.length > 0 && (
-                <div className="space-y-2 mt-1">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">自訂金額（不填則平分）</p>
-                  {ids.map(id => {
-                    const member = (allMembers || []).find(m => m.id === id);
-                    if (!member) return null;
-                    return (
-                      <div key={id} className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-slate-100">
-                        <span className="text-xs font-black text-slate-700 flex-1">{member.id === currentMember?.id ? `${member.name}（我）` : member.name}</span>
-                        <input type="number" value={customAmts[id] || ''}
-                          onChange={e => {
-                            const next = { ...customAmts, [id]: e.target.value };
-                            setModal({ ...modal, data: { ...modal.data, sharedCustomAmts: next } });
-                          }}
-                          placeholder="選填"
-                          className={`w-24 text-right text-xs font-bold text-${color}-600 bg-transparent outline-none border-b border-${color}-200 pb-0.5`} />
-                        <span className="text-[10px] text-slate-400">{modal.data?.currency}</span>
-                      </div>
-                    );
-                  })}
-                  <div className={`flex items-center justify-between px-3 py-2 rounded-xl border ${isOver || isUnder ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-100'}`}>
-                    <span className="text-[10px] font-black text-slate-400">合計</span>
-                    <span className={`text-xs font-black ${isOver || isUnder ? 'text-red-500' : 'text-emerald-600'}`}>
-                      {modal.data?.currency} {actualTotal.toLocaleString()}{totalAmt > 0 && ` / ${totalAmt.toLocaleString()}`}
-                      {isOver && ' ⚠️ 超過'}{isUnder && ' ⚠️ 未達'}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-        <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => { setModal({ ...modal, data: { ...modal.data, note: v } }); setWalletError(null); }} placeholder="輸入心得或詳情" />
-
-        {walletError && (
-          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-3 mb-1">
-            <span className="text-lg shrink-0">⚠️</span>
-            <div className="flex-1">
-              <p className="text-xs font-black text-red-600">水桶 {walletError.cur} 餘額不足</p>
-              <p className="text-[11px] text-red-400 mt-0.5">目前餘額 {walletError.cur === 'JPY' ? '¥' : walletError.cur === 'KRW' ? '₩' : '$'}{walletError.available.toLocaleString()}，支出 {walletError.cur === 'JPY' ? '¥' : walletError.cur === 'KRW' ? '₩' : '$'}{walletError.requested.toLocaleString()}</p>
-            </div>
-            <button onClick={() => setWalletError(null)} className="text-red-300 hover:text-red-500 shrink-0"><X size={14} /></button>
           </div>
         )}
+
+        {/* 共用錢包支出：幫誰支出（預設全員）*/}
+        {subTab === '共用錢包' && modal.data?.type === '支出' && (
+          <div className="mb-3 bg-blue-50 rounded-2xl p-3 border border-blue-100">
+            <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-2">👥 選擇支出角色（預設全員）</p>
+            <div className="flex flex-wrap gap-2">
+              {(allMembers || []).map(m => {
+                const selected = (modal.data?.forMemberIds || (allMembers || []).map(x => x.id)).includes(m.id);
+                return (
+                  <button key={m.id} type="button" onClick={() => {
+                    const cur = modal.data?.forMemberIds || (allMembers || []).map(x => x.id);
+                    const next = selected ? cur.filter(id => id !== m.id) : [...cur, m.id];
+                    if (next.length === 0) return;
+                    setModal({ ...modal, data: { ...modal.data, forMemberIds: next } });
+                  }} className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${selected ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-slate-500 border-slate-200 hover:bg-blue-50'}`}>
+                    {m.id === currentMember?.id ? `${m.name}（我）` : m.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div>
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5 block">日期</label>
+            <input type="date" value={modal.data?.date?.includes('/') ? `2026-${modal.data.date.replace('/', '-')}` : modal.data?.date || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, date: e.target.value } })} className="w-full bg-white border border-slate-200 rounded-2xl h-12 px-3 font-bold text-slate-700 text-sm outline-none focus:ring-2 focus:ring-violet-100 transition-all shadow-sm" />
+          </div>
+          <FormField label="幣別" type="select" options={['JPY', 'KRW', 'TWD']} value={modal.data?.currency} onChange={v => setModal({ ...modal, data: { ...modal.data, currency: v } })} />
+        </div>
+        <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex justify-between items-end mb-3">
+          <div className="flex-1">
+            <p className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-widest">金額</p>
+            <input type="text" value={modal.data?.amount || ''} onChange={e => setModal({ ...modal, data: { ...modal.data, amount: e.target.value } })} className="bg-transparent text-3xl font-black text-slate-700 outline-none w-full" placeholder="0" />
+          </div>
+          <button type="button" onClick={() => setIsCalcOpen(!isCalcOpen)} className="p-2.5 rounded-xl transition-colors shadow-sm border bg-white text-slate-500 border-slate-200 hover:bg-slate-50 active:scale-95"><Calculator size={24} /></button>
+        </div>
+        {isCalcOpen && (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
+              <button key={n} type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: (modal.data?.amount || '') + n.toString() } })} className="h-12 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 shadow-sm hover:bg-slate-50 active:bg-slate-100 text-base transition-colors">{n}</button>
+            ))}
+            {/* 陣列防護加強：轉為 String 避免 slice 報錯 */}
+            <button type="button" onClick={() => setModal({ ...modal, data: { ...modal.data, amount: String(modal.data?.amount || '').slice(0, -1) } })} className="h-12 bg-slate-100 border border-slate-200 font-bold text-slate-600 flex items-center justify-center active:scale-90 hover:bg-slate-200 transition-colors"><Delete size={22} /></button>
+          </div>
+        )}
+        <FormField label="備註（選填）" type="textarea" value={modal.data?.note} onChange={v => setModal({ ...modal, data: { ...modal.data, note: v } })} placeholder="輸入心得或詳情" />
         <button type="button" onClick={() => {
-          if (!modal.data?.amount || !modal.data?.date) {
-            alert('請填寫金額和日期');
-            return;
-          }
-
-          // ── 共用錢包支出：檢查餘額是否足夠（結算退款跳過）──
-          if (subTab === '共用錢包' && modal.data?.type === '支出' && !modal.data?.isSettlement) {
-            const cur = modal.data.currency;
-            const amt = Number(modal.data.amount) || 0;
-            const wallet = Array.isArray(sharedWallet) ? sharedWallet : [];
-            const currentBalance = wallet.reduce((acc, w) => {
-              if (w.currency !== cur) return acc;
-              const a = Number(w.amount) || 0;
-              return w.type === '存入' ? acc + a : acc - a;
-            }, 0);
-            // 編輯時要把原本那筆的金額加回來再比較
-            const originalAmt = modal.data.id
-              ? (() => {
-                  const orig = wallet.find(w => w.id === modal.data.id);
-                  return orig?.type === '支出' && orig?.currency === cur ? Number(orig.amount) || 0 : 0;
-                })()
-              : 0;
-            const availableBalance = currentBalance + originalAmt;
-            if (amt > availableBalance) {
-              setWalletError({ cur, available: availableBalance, requested: amt }); return;
-            }
-          }
-
-          const rawDate = modal.data?.date || '';
-          const formattedDate = rawDate.includes('-') ? rawDate.split('-').slice(1).join('/') : rawDate;
-          if (!formattedDate) { alert('請填寫日期'); return; }
+          if (!modal.data?.amount || !modal.data?.date) return;
+          const formattedDate = modal.data.date.includes('-') ? modal.data.date.split('-').slice(1).join('/') : modal.data.date;
 
           const allMemberIds = (allMembers || []).map(m => m.id);
           const rawData = {
@@ -3785,153 +3064,60 @@ const WalletTab = ({ onDownload }) => {
           };
           const cleanData = Object.fromEntries(
             Object.entries(rawData)
-              .filter(([k, v]) => v !== undefined && k !== 'splitMembers' && k !== 'splitIncludeSelf' && k !== 'selfAmount')
+              .filter(([, v]) => v !== undefined)
               .map(([k, v]) => [k, Array.isArray(v) ? v.filter(x => x !== undefined) : v])
           );
-          // 保留 sharedCustomAmts
-          if (modal.data.sharedCustomAmts && Object.keys(modal.data.sharedCustomAmts).length > 0) {
-            cleanData.sharedCustomAmts = modal.data.sharedCustomAmts;
-          }
           
-          // 統一用同一個 id，確保 walletItemId 對得上
-          const now = Date.now();
-          const walletItemId = modal.data.id ? modal.data.id : now;
-          // 共用錢包：計算實際分配金額存進 sharedCustomAmts
+          // 陣列防護加強
+          // 共用錢包：儲存實際分配金額
           let finalData = cleanData;
           if (subTab === '共用錢包') {
-            const isIn = cleanData.type === '存入';
-            const ids = isIn
-              ? (Array.isArray(cleanData.contributorIds) && cleanData.contributorIds.length > 0 ? cleanData.contributorIds : allMemberIds)
-              : (Array.isArray(cleanData.forMemberIds) && cleanData.forMemberIds.length > 0 ? cleanData.forMemberIds : allMemberIds);
-            const customAmts = modal.data.sharedCustomAmts || {};
-            const totalAmt = Number(cleanData.amount) || 0;
-            const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-            const unfilledIds = ids.filter(id => !customAmts[id]);
-            const perUnfilled = unfilledIds.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds.length) : 0;
-            const remainder = totalAmt - filledSum - perUnfilled * unfilledIds.length;
-            const startIdxSave = unfilledIds.length > 0 ? Math.abs(walletItemId % unfilledIds.length) : 0;
-            const finalAmts = {};
-            ids.forEach(id => {
-              if (customAmts[id]) {
-                finalAmts[id] = Number(customAmts[id]);
-              } else {
-                const myIdx = unfilledIds.indexOf(id);
-                const adjustedIdx = (myIdx - startIdxSave + unfilledIds.length) % unfilledIds.length;
-                finalAmts[id] = perUnfilled + (adjustedIdx < remainder ? 1 : 0);
+            const isIn2 = finalData.type === '存入';
+            const allMIds = (allMembers || []).map(m => m.id);
+            const ids2 = isIn2
+              ? (Array.isArray(finalData.contributorIds) && finalData.contributorIds.length > 0 ? finalData.contributorIds : allMIds)
+              : (Array.isArray(finalData.forMemberIds) && finalData.forMemberIds.length > 0 ? finalData.forMemberIds : allMIds);
+            const cAmts2 = modal.data.sharedCustomAmts || {};
+            const tAmt2 = Number(finalData.amount) || 0;
+            const fSum2 = ids2.reduce((s, id) => s + (Number(cAmts2[id])||0), 0);
+            const uIds2 = ids2.filter(id => !cAmts2[id]);
+            const pPer2 = uIds2.length > 0 ? Math.floor((tAmt2-fSum2)/uIds2.length) : 0;
+            const rem2 = tAmt2 - fSum2 - pPer2 * uIds2.length;
+            const wId2 = modal.data.id ? modal.data.id : Date.now();
+            const sIdx2 = uIds2.length > 0 ? Math.abs(wId2 % uIds2.length) : 0;
+            const fAmts2 = {};
+            ids2.forEach(id => {
+              if (cAmts2[id]) { fAmts2[id] = Number(cAmts2[id]); }
+              else {
+                const mi = uIds2.indexOf(id);
+                const adj = (mi - sIdx2 + uIds2.length) % uIds2.length;
+                fAmts2[id] = pPer2 + (adj < rem2 ? 1 : 0);
               }
             });
-            finalData = { ...cleanData, sharedCustomAmts: finalAmts };
+            finalData = { ...finalData, sharedCustomAmts: fAmts2 };
           }
+
           if (modal.data.id) setActiveWallet(p => (Array.isArray(p) ? p : []).map(w => w.id === modal.data.id ? finalData : w));
-          else setActiveWallet(p => [...(Array.isArray(p) ? p : []), { ...finalData, id: walletItemId }]);
+          else setActiveWallet(p => [...(Array.isArray(p) ? p : []), { ...finalData, id: Date.now() }]);
 
-          // 新分攤邏輯：splitMembers 有人才產生記錄
-          // 編輯時，如果所有相關 splitRecords 都已結清，跳過重建
-          const existingRecords = (Array.isArray(splitRecords) ? splitRecords : [])
-            .filter(r => String(r.walletItemId) === String(walletItemId));
-          const allExistingSettled = existingRecords.length > 0 && existingRecords.every(r => r.isSettled);
-
-          if ((modal.data.splitMembers || []).length > 0 && modal.data.amount && !allExistingSettled) {
-            const splitMembers = modal.data.splitMembers;
-            const selfIncluded = modal.data.splitIncludeSelf !== false;
-            const splitTotalAmt = Number(modal.data.amount) || 0;
-            const selfAmtRaw = modal.data.selfAmount;
-            const selfHasCustom = selfAmtRaw !== '' && selfAmtRaw !== undefined && selfAmtRaw !== null && !isNaN(Number(selfAmtRaw)) && Number(selfAmtRaw) > 0;
-            const selfCustomAmt = selfHasCustom ? Number(selfAmtRaw) : 0;
-            const splitFilledSum = splitMembers.reduce((s, m) => s + (Number(m.amount) || 0), 0);
-            const filledSumWithSelf = splitFilledSum + (selfHasCustom ? selfCustomAmt : 0);
-            const unfilledOthers = splitMembers.filter(m => !m.amount).length;
-            const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
-            const splitRemaining = Math.max(0, splitTotalAmt - filledSumWithSelf);
-            const splitPerUnfilled = unfilledCount > 0 ? Math.round((splitRemaining / unfilledCount) * 10) / 10 : 0;
-            const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : splitPerUnfilled) : 0;
-            const savedItem = { ...cleanData, id: walletItemId };
-
-            // 如果是編輯，先清除舊的未結清 splitRecords（已結清的保留）
-            if (modal.data.id) {
-              setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r =>
-                r.walletItemId !== modal.data.id || r.isSettled
-              ));
-              // 清除被分攤者 wallet 裡的舊代墊記錄
-              setAllPersonalWallets(prev => {
-                const next = { ...prev };
-                splitMembers.forEach(entry => {
-                  const memberId = entry.id;
-                  if (next[memberId]) {
-                    next[memberId] = next[memberId].filter(w => w.walletItemId !== modal.data.id);
-                  }
-                });
-                return next;
-              });
-            }
-
-            const newRecords = splitMembers.map((entry, idx) => {
-              const memberAmt = Number(entry.amount) || splitPerUnfilled;
-              const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
-              return {
-                id: now + idx + 100,
-                walletItemId,
-                payerId: currentMember?.id,
-                receiverId: entry.id,
-                amount: memberAmtSafe,
-                currency: modal.data.currency || 'TWD',
-                note: modal.data.name || '',
-                createdAt: now,
-                isSettled: false,
-                settledAt: null,
-              };
-            });
+          if (modal.data.splitPayerId && (modal.data.splitReceiverIds || []).length > 0 && modal.data.amount) {
+            const receiverIds = modal.data.splitReceiverIds;
+            const perAmount = Math.round(Number(modal.data.amount) / receiverIds.length);
+            const now = Date.now();
+            const newRecords = receiverIds.map((receiverId, idx) => ({
+              id: now + idx + 100, payerId: modal.data.splitPayerId, receiverId,
+              amount: perAmount, currency: modal.data.currency || 'TWD',
+              note: modal.data.name || '', createdAt: now,
+            }));
             setSplitRecords(p => [...(Array.isArray(p) ? p : []), ...newRecords]);
-
-            // 同時寫一筆代墊記錄進被分攤者的 wallet
-            // 跳過已 deletedByReceiver 的人（他刪了不要再加回來）
-            const deletedReceiverIds = new Set(
-              (Array.isArray(splitRecords) ? splitRecords : [])
-                .filter(r => String(r.walletItemId) === String(walletItemId) && r.deletedByReceiver)
-                .map(r => r.receiverId)
-            );
-            setAllPersonalWallets(prev => {
-              const next = { ...prev };
-              splitMembers.forEach((entry, idx) => {
-                const memberId = entry.id;
-                if (deletedReceiverIds.has(memberId)) return;
-                const memberAmt = Number(entry.amount) || splitPerUnfilled || Math.round(splitTotalAmt / (splitMembers.length + 1));
-                const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
-                const proxyRecord = {
-                  id: now + idx + 200,
-                  walletItemId,
-                  name: cleanData.name,
-                  type: '支出',
-                  amount: memberAmtSafe || memberAmt,
-                  currency: cleanData.currency,
-                  date: formattedDate,
-                  note: cleanData.note || '',
-                  editedById: currentMember?.id,
-                  isProxyRecord: true,
-                  createdAt: now,
-                };
-                const cur = next[memberId] || [];
-                next[memberId] = [...cur, proxyRecord];
-              });
-              return next;
-            });
-          } else if (modal.data.id) {
-            // 編輯時若清空分攤成員，也清除舊記錄
-            setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => r.walletItemId !== modal.data.id));
           }
 
-          // 自動加日期到 walletDates
-          if (!(Array.isArray(walletDates) ? walletDates : []).includes(formattedDate)) {
-            setWalletDates(prev => [...(Array.isArray(prev) ? prev : []), formattedDate].sort());
-          }
-          if (formattedDate) setSelectedDate(formattedDate);
-          setModal({ type: null }); setIsCalcOpen(false);
+          setSelectedDate(formattedDate); setModal({ type: null }); setIsCalcOpen(false);
         }} className="w-full bg-violet-500 text-white font-black py-4 rounded-2xl shadow-md mt-1 active:scale-95 text-base hover:bg-violet-600 transition-colors">確認儲存</button>
       </Modal>
 
       {/* ── 公費結算彈跳視窗 ── */}
       {showPoolSettlement ? (() => {
-        try {
         const wallet = Array.isArray(sharedWallet) ? sharedWallet : [];
         const allMemberIds = (allMembers || []).map(m => m.id);
         const memberCount = allMemberIds.length || 1;
@@ -3940,51 +3126,49 @@ const WalletTab = ({ onDownload }) => {
         const memberBalance = {};
         (allMembers || []).forEach(m => { memberBalance[m.id] = { KRW: 0, JPY: 0, TWD: 0 }; });
 
-        // 存入：依 contributorIds 分配，若有 sharedCustomAmts 用自訂金額
+        // 存入：依 contributorIds 分配
         wallet.filter(w => w.type === '存入').forEach(w => {
-          const rawIds = w.contributorIds;
-          const ids = (Array.isArray(rawIds) && rawIds.length > 0 ? rawIds : allMemberIds).filter(Boolean);
-          const customAmts = w.sharedCustomAmts || {};
-          const totalAmt = Number(w.amount) || 0;
-          const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-          const unfilledIds_in = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds_in.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds_in.length) : 0;
-          const remainder_in = totalAmt - filledSum - perUnfilled * unfilledIds_in.length;
-          const startIdx_in = unfilledIds_in.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds_in.length) : 0;
-          ids.forEach((id) => {
+          const rawCIds = w.contributorIds;
+          const ids = (Array.isArray(rawCIds) && rawCIds.length > 0 ? rawCIds : allMemberIds).filter(Boolean);
+          const cAmts = w.sharedCustomAmts || {};
+          const tAmt = Number(w.amount) || 0;
+          const fSum = ids.reduce((s, id) => s + (Number(cAmts[id])||0), 0);
+          const uIds = ids.filter(id => !cAmts[id]);
+          const pPer = uIds.length > 0 ? Math.floor((tAmt-fSum)/uIds.length) : 0;
+          const rem = tAmt - fSum - pPer * uIds.length;
+          const sIdx = uIds.length > 0 ? Math.abs((Number(w.id)||0) % uIds.length) : 0;
+          ids.forEach(id => {
             if (!memberBalance[id]) return;
             let amt;
-            if (customAmts[id]) {
-              amt = Number(customAmts[id]);
-            } else {
-              const myIdx = unfilledIds_in.indexOf(id);
-              const adjustedIdx = (myIdx - startIdx_in + unfilledIds_in.length) % unfilledIds_in.length;
-              amt = perUnfilled + (adjustedIdx < remainder_in ? 1 : 0);
+            if (cAmts[id]) { amt = Number(cAmts[id]); }
+            else {
+              const mi = uIds.indexOf(id);
+              const adj = mi >= 0 ? (mi - sIdx + uIds.length) % uIds.length : 0;
+              amt = pPer + (mi >= 0 && adj < rem ? 1 : 0);
             }
             memberBalance[id][w.currency] += amt;
           });
         });
 
-        // 支出：依 forMemberIds 分配，若有 sharedCustomAmts 用自訂金額
+        // 支出：依 forMemberIds 分配（全員或部分人）
         wallet.filter(w => w.type === '支出').forEach(w => {
-          const rawOutIds = w.forMemberIds;
-          const ids = (Array.isArray(rawOutIds) && rawOutIds.length > 0 ? rawOutIds : allMemberIds).filter(Boolean);
-          const customAmts = w.sharedCustomAmts || {};
-          const totalAmt = Number(w.amount) || 0;
-          const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-          const unfilledIds_out = ids.filter(id => !customAmts[id]);
-          const perUnfilled = unfilledIds_out.length > 0 ? Math.floor((totalAmt - filledSum) / unfilledIds_out.length) : 0;
-          const remainder_out = totalAmt - filledSum - perUnfilled * unfilledIds_out.length;
-          const startIdx_out = unfilledIds_out.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds_out.length) : 0;
-          ids.forEach((id) => {
+          const rawFIds = w.forMemberIds;
+          const ids = (Array.isArray(rawFIds) && rawFIds.length > 0 ? rawFIds : allMemberIds).filter(Boolean);
+          const cAmts = w.sharedCustomAmts || {};
+          const tAmt = Number(w.amount) || 0;
+          const fSum = ids.reduce((s, id) => s + (Number(cAmts[id])||0), 0);
+          const uIds = ids.filter(id => !cAmts[id]);
+          const pPer = uIds.length > 0 ? Math.floor((tAmt-fSum)/uIds.length) : 0;
+          const rem = tAmt - fSum - pPer * uIds.length;
+          const sIdx = uIds.length > 0 ? Math.abs((Number(w.id)||0) % uIds.length) : 0;
+          ids.forEach(id => {
             if (!memberBalance[id]) return;
             let amt;
-            if (customAmts[id]) {
-              amt = Number(customAmts[id]);
-            } else {
-              const myIdx = unfilledIds_out.indexOf(id);
-              const adjustedIdx = (myIdx - startIdx_out + unfilledIds_out.length) % unfilledIds_out.length;
-              amt = perUnfilled + (adjustedIdx < remainder_out ? 1 : 0);
+            if (cAmts[id]) { amt = Number(cAmts[id]); }
+            else {
+              const mi = uIds.indexOf(id);
+              const adj = mi >= 0 ? (mi - sIdx + uIds.length) % uIds.length : 0;
+              amt = pPer + (mi >= 0 && adj < rem ? 1 : 0);
             }
             memberBalance[id][w.currency] -= amt;
           });
@@ -4001,72 +3185,41 @@ const WalletTab = ({ onDownload }) => {
         const balance = { KRW: totalIn.KRW - totalOut.KRW, JPY: totalIn.JPY - totalOut.JPY, TWD: totalIn.TWD - totalOut.TWD };
 
         // 每人明細
-        // 計算某人在某筆帳的實際金額（跟 memberBalance 完全一致）
-        const getMemberAmount = (w, memberId, ids) => {
-          const customAmts = w.sharedCustomAmts || {};
-          const totalAmt = Number(w.amount) || 0;
-          if (customAmts[memberId] !== undefined && customAmts[memberId] !== '') {
-            return Number(customAmts[memberId]);
-          }
-          // 沒有自訂：每人 floor，餘數分給前 remainder 個人（每人多 1）
-          const filledSum = ids.reduce((s, id) => s + (Number(customAmts[id]) || 0), 0);
-          const unfilledIds = ids.filter(id => !customAmts[id]);
-          const remaining = totalAmt - filledSum;
-          const perUnfilled = unfilledIds.length > 0 ? Math.floor(remaining / unfilledIds.length) : 0;
-          const remainder = remaining - perUnfilled * unfilledIds.length;
-          // 用 walletId 決定從哪個人開始多 1（輪流）
-          const startIdx = unfilledIds.length > 0 ? Math.abs((Number(w.id) || 0) % unfilledIds.length) : 0;
-          const myUnfilledIdx = unfilledIds.indexOf(memberId);
-          // 前 remainder 個人（從 startIdx 開始）各多 1 塊
-          const adjustedIdx = (myUnfilledIdx - startIdx + unfilledIds.length) % unfilledIds.length;
-          return perUnfilled + (adjustedIdx < remainder ? 1 : 0);
-        };
-
         const getMemberDetail = (memberId) => {
           const lines = [];
-          wallet.forEach(w => {
-            if (w.type === '存入') {
-              const rawCIds = w.contributorIds;
-              const ids = (Array.isArray(rawCIds) && rawCIds.length > 0 ? rawCIds : allMemberIds).filter(Boolean);
-              if (!ids.includes(memberId)) return;
-              const perAmount = getMemberAmount(w, memberId, ids);
-              lines.push({ type: 'in', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
-            } else {
-              const rawFIds = w.forMemberIds;
-              const ids = (Array.isArray(rawFIds) && rawFIds.length > 0 ? rawFIds : allMemberIds).filter(Boolean);
-              if (!ids.includes(memberId)) return;
-              const perAmount = getMemberAmount(w, memberId, ids);
-              lines.push({ type: 'out', name: w.name, date: w.date, currency: w.currency, amount: perAmount, createdAt: w.createdAt || 0 });
-            }
+          wallet.filter(w => w.type === '存入').forEach(w => {
+            const rawCIds = w.contributorIds;
+            const ids = (Array.isArray(rawCIds) && rawCIds.length > 0 ? rawCIds : allMemberIds).filter(Boolean);
+            if (!ids.includes(memberId)) return;
+            const cAmts = w.sharedCustomAmts || {};
+            const tAmt = Number(w.amount) || 0;
+            const fSum = ids.reduce((s, id) => s + (Number(cAmts[id])||0), 0);
+            const uIds = ids.filter(id => !cAmts[id]);
+            const pPer = uIds.length > 0 ? Math.floor((tAmt-fSum)/uIds.length) : 0;
+            const rem = tAmt - fSum - pPer * uIds.length;
+            const sIdx = uIds.length > 0 ? Math.abs((Number(w.id)||0) % uIds.length) : 0;
+            const mi = uIds.indexOf(memberId);
+            const adj = mi >= 0 ? (mi - sIdx + uIds.length) % uIds.length : 0;
+            const perAmount = cAmts[memberId] ? Number(cAmts[memberId]) : pPer + (mi >= 0 && adj < rem ? 1 : 0);
+            lines.push({ type: 'in', name: w.name, date: w.date, currency: w.currency, amount: perAmount });
           });
-          // 按日期 + createdAt 排序（舊到新）
-          return lines.sort((a, b) => {
-            if (a.date < b.date) return -1;
-            if (a.date > b.date) return 1;
-            return a.createdAt - b.createdAt;
+          wallet.filter(w => w.type === '支出').forEach(w => {
+            const rawFIds = w.forMemberIds;
+            const ids = (Array.isArray(rawFIds) && rawFIds.length > 0 ? rawFIds : allMemberIds).filter(Boolean);
+            if (!ids.includes(memberId)) return;
+            const cAmts = w.sharedCustomAmts || {};
+            const tAmt = Number(w.amount) || 0;
+            const fSum = ids.reduce((s, id) => s + (Number(cAmts[id])||0), 0);
+            const uIds = ids.filter(id => !cAmts[id]);
+            const pPer = uIds.length > 0 ? Math.floor((tAmt-fSum)/uIds.length) : 0;
+            const rem = tAmt - fSum - pPer * uIds.length;
+            const sIdx = uIds.length > 0 ? Math.abs((Number(w.id)||0) % uIds.length) : 0;
+            const mi = uIds.indexOf(memberId);
+            const adj = mi >= 0 ? (mi - sIdx + uIds.length) % uIds.length : 0;
+            const perAmount = cAmts[memberId] ? Number(cAmts[memberId]) : pPer + (mi >= 0 && adj < rem ? 1 : 0);
+            lines.push({ type: 'out', name: w.name, date: w.date, currency: w.currency, amount: perAmount });
           });
-        };
-
-        const handlePoolSettle = (m, cur, amt) => {
-          const now = new Date();
-          const dateStr = `${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}`;
-          const bal = memberBalance[m.id]?.[cur] || 0;
-          const isOwed = bal < 0; // 該成員欠水桶 → 補繳（存入水桶）
-          const record = {
-            id: Date.now(),
-            name: isOwed ? `公費結算補繳（${m.name}）` : `公費結算退款（${m.name}）`,
-            type: isOwed ? '存入' : '支出',
-            amount: amt,
-            currency: cur,
-            date: dateStr,
-            contributorIds: isOwed ? [m.id] : (allMembers || []).map(x => x.id),
-            forMemberIds: isOwed ? (allMembers || []).map(x => x.id) : [m.id],
-            note: '公費結算自動記錄',
-            editedById: currentMember?.id || '',
-            createdAt: Date.now(),
-            isSettlement: true,
-          };
-          setSharedWallet(p => [...(Array.isArray(p) ? p : []), record]);
+          return lines;
         };
 
         return (
@@ -4082,123 +3235,45 @@ const WalletTab = ({ onDownload }) => {
             SYM={SYM}
             currencyConfig={currencyConfig}
             onClose={() => setShowPoolSettlement(false)}
-            onSettle={handlePoolSettle}
-            updatedAt={updatedAt}
           />
         );
-        } catch(e) {
-          console.error('PoolSettlement error:', e);
-          return (
-            <div className="fixed inset-0 z-[300] flex items-center justify-center p-8 bg-slate-900/50">
-              <div className="bg-white rounded-3xl p-6 text-center">
-                <p className="text-red-500 font-bold mb-2">載入失敗</p>
-                <p className="text-xs text-slate-400 mb-4">{e.message}</p>
-                <button onClick={() => setShowPoolSettlement(false)} className="px-4 py-2 bg-slate-100 rounded-xl text-sm font-bold">關閉</button>
-              </div>
-            </div>
-          );
-        }
       })() : null}
 
-      {/* ── 全員代墊結算彈跳視窗 ── */}
+      {/* ── 結算彈跳視窗 ── */}
       {showSettlement ? (() => {
         const safeRecords = Array.isArray(splitRecords) ? splitRecords : [];
+        const transfers = simplifyDebts(safeRecords, allMembers || [], rates);
         const memberMap = {};
         (allMembers || []).forEach(m => { memberMap[m.id] = m; });
-        const today = new Date();
-        const todayStr = `${(today.getMonth() + 1).toString().padStart(2, '0')}/${today.getDate().toString().padStart(2, '0')}`;
+        const myReceivable = transfers.filter(t => t.to === currentMember?.id);
+        const myPayable = transfers.filter(t => t.from === currentMember?.id);
 
-        // 所有未結清記錄
-        const unsettledRecords = safeRecords.filter(r => !r.isSettled);
-
-        // 簡化結算：全員
-        const allTransfers = simplifyDebtsByCurrency(safeRecords, allMembers || []);
-
-        // 單筆結清
-        const settleRecord = (r) => {
+        const settleOne = (t) => {
+          const stateKey = t.from + t.to;
+          const s = transferStates[stateKey] || { currency: 'TWD', date: selectedDate };
+          const amountInCur = s.currency === 'TWD' ? t.amountTWD : Math.round(t.amountTWD / rates[s.currency]);
+          const originals = safeRecords.filter(r =>
+            (r.payerId === t.to && r.receiverId === t.from) ||
+            (r.payerId === t.from && r.receiverId === t.to)
+          );
+          setSplitRecords(p => (Array.isArray(p) ? p : []).filter(r => !originals.find(x => x.id === r.id)));
           const now = Date.now();
-          const iAmPayer = r.payerId === currentMember?.id;
-          const otherMemberId = iAmPayer ? r.receiverId : r.payerId;
-          const otherMemberName = memberMap[otherMemberId]?.name || '';
-          // 寫進自己的帳
-          setPersonalWallet(p => [...(Array.isArray(p) ? p : []), {
-            id: now,
-            name: iAmPayer ? `收回款項（${otherMemberName}）` : `還款（${otherMemberName}）`,
-            type: iAmPayer ? '存入' : '支出',
-            currency: r.currency,
-            amount: r.amount,
-            date: todayStr,
-            createdAt: now,
-            editedById: currentMember?.id,
-            isSettlement: true,
-          }]);
-          // 寫進對方的帳
-          setAllPersonalWallets(prev => {
-            const cur = prev[otherMemberId] || [];
-            return {
-              ...prev,
-              [otherMemberId]: [...cur, {
-                id: now + 1,
-                name: iAmPayer ? `還款（${memberMap[currentMember?.id]?.name}）` : `收回款項（${memberMap[currentMember?.id]?.name}）`,
-                type: iAmPayer ? '支出' : '存入',
-                currency: r.currency,
-                amount: r.amount,
-                date: todayStr,
-                createdAt: now,
-                editedById: currentMember?.id,
-                isSettlement: true,
-              }],
-            };
+          if (t.to === currentMember?.id) {
+            setPersonalWallet(p => [...(Array.isArray(p) ? p : []), {
+              id: now, name: `收回代墊款（${memberMap[t.from]?.name}）`,
+              type: '存入', currency: s.currency, amount: amountInCur, date: s.date, createdAt: now, editedById: currentMember?.id
+            }]);
+          } else if (t.from === currentMember?.id) {
+            setPersonalWallet(p => [...(Array.isArray(p) ? p : []), {
+              id: now, name: `還款給 ${memberMap[t.to]?.name}`,
+              type: '支出', currency: s.currency, amount: amountInCur, date: s.date, createdAt: now, editedById: currentMember?.id
+            }]);
+          }
+          setTransferStates(p => {
+            const next = { ...p };
+            delete next[t.from + t.to];
+            return next;
           });
-          setSplitRecords(p => (Array.isArray(p) ? p : []).map(x =>
-            x.id === r.id ? { ...x, isSettled: true, settledAt: now, settlementCardId: now } : x
-          ));
-        };
-
-        // 簡化結算結清：雙方都寫卡片
-        const settleFinal = (t) => {
-          const now = Date.now();
-          const iAmCreditor = t.to === currentMember?.id;
-          const otherMemberId = iAmCreditor ? t.from : t.to;
-          const otherName = memberMap[otherMemberId]?.name || '';
-          const myName = memberMap[currentMember?.id]?.name || '';
-          // 寫進自己的帳
-          setPersonalWallet(p => [...(Array.isArray(p) ? p : []), {
-            id: now,
-            name: iAmCreditor ? `收回款項（${otherName}）` : `還款（${otherName}）`,
-            type: iAmCreditor ? '存入' : '支出',
-            currency: t.currency,
-            amount: t.amount,
-            date: todayStr,
-            createdAt: now,
-            editedById: currentMember?.id,
-            isSettlement: true,
-          }]);
-          // 寫進對方的帳
-          setAllPersonalWallets(prev => {
-            const cur = prev[otherMemberId] || [];
-            return {
-              ...prev,
-              [otherMemberId]: [...cur, {
-                id: now + 1,
-                name: iAmCreditor ? `還款（${myName}）` : `收回款項（${myName}）`,
-                type: iAmCreditor ? '支出' : '存入',
-                currency: t.currency,
-                amount: t.amount,
-                date: todayStr,
-                createdAt: now,
-                editedById: currentMember?.id,
-                isSettlement: true,
-              }],
-            };
-          });
-          // 把這筆幣別下跟雙方有關的未結清記錄全部標記結清
-          setSplitRecords(p => (Array.isArray(p) ? p : []).map(x => {
-            const related = !x.isSettled && x.currency === t.currency &&
-              ((x.payerId === t.from && x.receiverId === t.to) ||
-               (x.payerId === t.to && x.receiverId === t.from));
-            return related ? { ...x, isSettled: true, settledAt: now, settlementCardId: now } : x;
-          }));
         };
 
         return (
@@ -4209,54 +3284,102 @@ const WalletTab = ({ onDownload }) => {
                 <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto mb-4" />
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-lg font-black text-slate-800">分攤結算</h3>
-                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}・<span className={updatedAt === '使用預設匯率' ? 'text-amber-400' : 'text-emerald-400'}>{updatedAt}</span></p>
+                    <h3 className="text-lg font-black text-slate-800">代墊結算</h3>
+                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">1 KRW ≈ NT${rates.KRW}・1 JPY ≈ NT${rates.JPY}・{updatedAt}</p>
                   </div>
                   <button onClick={() => setShowSettlement(false)} className="p-2 bg-slate-100 rounded-full text-slate-500"><X size={18} /></button>
                 </div>
               </div>
 
               <div className="px-5 pt-4 space-y-5 pb-6">
-
-                {/* 上：最終結算（全員）*/}
+                {/* 簡化後轉帳清單（大家都看得到）*/}
                 <section>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">⚖️ 最終結算</p>
-                  {allTransfers.length === 0 ? (
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">💸 簡化後轉帳清單</p>
+                  {transfers.length === 0 ? (
                     <div className="bg-emerald-50 border border-emerald-100 rounded-3xl p-6 text-center">
                       <div className="text-2xl mb-2">🎉</div>
                       <p className="text-sm font-black text-emerald-600">全部結清了！</p>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      {allTransfers.map((t, idx) => {
-                        const fromMember = memberMap[t.from];
-                        const toMember = memberMap[t.to];
-                        if (!fromMember || !toMember) return null;
-                        const iAmFrom = t.from === currentMember?.id;
-                        const iAmTo = t.to === currentMember?.id;
-                        const iAmInvolved = iAmFrom || iAmTo;
+                    <div className="space-y-3">
+                      {transfers.map((t, idx) => {
+                        const from = memberMap[t.from];
+                        const to = memberMap[t.to];
+                        if (!from || !to) return null;
+                        const stateKey = t.from + t.to;
+                        const s = transferStates[stateKey] || { currency: 'TWD', date: selectedDate || visibleWalletDates[visibleWalletDates.length - 1] || '06/06', paidConfirmed: false, receivedConfirmed: false };
+                        const iAmPayer = t.from === currentMember?.id;
+                        const iAmReceiver = t.to === currentMember?.id;
+                        const bothConfirmed = s.paidConfirmed && s.receivedConfirmed;
+                        const originals = safeRecords.filter(r => (r.payerId === t.to && r.receiverId === t.from) || (r.payerId === t.from && r.receiverId === t.to));
+                        const byCur = {};
+                        originals.forEach(r => { byCur[r.currency] = (byCur[r.currency] || 0) + r.amount; });
+
                         return (
-                          <div key={idx} className={`flex items-center gap-3 px-4 py-3 rounded-2xl border shadow-sm ${iAmTo ? 'bg-emerald-50 border-emerald-100' : iAmFrom ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'}`}>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <Avatar member={fromMember} className="w-7 h-7 rounded-xl text-xs" />
-                              <span className="text-[10px] text-slate-300">→</span>
-                              <Avatar member={toMember} className="w-7 h-7 rounded-xl text-xs" />
+                          <div key={idx} className={`bg-white border border-slate-100 rounded-3xl p-4 shadow-sm transition-opacity ${bothConfirmed ? 'opacity-40' : ''}`}>
+                            <div className="flex items-center gap-3 mb-3">
+                              <Avatar member={from} className="w-8 h-8 rounded-xl text-sm" />
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-sm font-black text-slate-800 ${bothConfirmed ? 'line-through' : ''}`}>{from.name}</span>
+                                  <span className="text-slate-300 text-xs">→</span>
+                                  <span className={`text-sm font-black text-slate-800 ${bothConfirmed ? 'line-through' : ''}`}>{to.name}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  {Object.entries(byCur).map(([cur, amt]) => `${SYM[cur]}${amt.toLocaleString()}`).join('・')} ≈ NT${t.amountTWD.toLocaleString()}
+                                </div>
+                              </div>
+                              <Avatar member={to} className="w-8 h-8 rounded-xl text-sm" />
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-black text-slate-700">
-                                {iAmFrom ? '我' : fromMember.name} 還 {iAmTo ? '我' : toMember.name}
-                              </p>
-                              <p className={`text-sm font-black ${iAmTo ? 'text-emerald-600' : iAmFrom ? 'text-red-500' : 'text-slate-600'}`}>
-                                {SYM[t.currency]}{t.amount.toLocaleString()} {t.currency}
-                              </p>
-                              <p className="text-[10px] text-slate-400">≈ NT${toTWD(t.amount, t.currency).toLocaleString()}</p>
-                            </div>
-                            {iAmInvolved && (
-                              <button onClick={() => settleFinal(t)}
-                                className={`flex-shrink-0 px-3 py-1.5 rounded-xl text-[10px] font-black border active:scale-95 transition-all
-                                  ${iAmTo ? 'bg-emerald-500 text-white border-emerald-500 hover:bg-emerald-600' : 'bg-red-500 text-white border-red-500 hover:bg-red-600'}`}>
-                                {iAmTo ? '收款' : '還款'}
-                              </button>
+
+                            {!bothConfirmed && (iAmPayer || iAmReceiver) && (
+                              <div className="bg-slate-50 rounded-2xl p-3 mb-3 space-y-2">
+                                <div className="flex gap-2 items-center flex-wrap">
+                                  <span className="text-[10px] text-slate-400 font-bold">收款幣別：</span>
+                                  {['KRW', 'JPY', 'TWD'].map(cur => (
+                                    <button key={cur} onClick={() => setTransferStates(p => ({ ...p, [stateKey]: { ...s, currency: cur } }))}
+                                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black border transition-all ${s.currency === cur ? 'bg-violet-500 text-white border-violet-500' : 'bg-white text-slate-500 border-slate-200'}`}>
+                                      {cur === 'TWD' ? `NT$${t.amountTWD.toLocaleString()}` : `${SYM[cur]}${Math.round(t.amountTWD / rates[cur]).toLocaleString()}`}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="flex gap-2 items-center">
+                                  <span className="text-[10px] text-slate-400 font-bold">記入日期：</span>
+                                  <select value={s.date} onChange={e => setTransferStates(p => ({ ...p, [stateKey]: { ...s, date: e.target.value } }))}
+                                    className="text-[10px] font-bold text-violet-600 bg-white border border-violet-200 rounded-lg px-2 py-1 outline-none">
+                                    {visibleWalletDates.length > 0 ? visibleWalletDates.map(d => <option key={d} value={d}>{d}</option>) : <option value={s.date}>{s.date}</option>}
+                                  </select>
+                                </div>
+                              </div>
+                            )}
+
+                            {!bothConfirmed && (
+                              <div className="flex gap-2">
+                                <button onClick={() => {
+                                  if (!iAmPayer || s.paidConfirmed) return;
+                                  const newState = { ...s, paidConfirmed: true };
+                                  setTransferStates(p => ({ ...p, [stateKey]: newState }));
+                                  if (newState.receivedConfirmed) settleOne(t);
+                                }} className={`flex-1 py-2.5 rounded-2xl text-xs font-black border transition-all ${s.paidConfirmed ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : iAmPayer ? 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100 cursor-pointer' : 'bg-slate-50 text-slate-300 border-slate-100 cursor-default'}`}>
+                                  {s.paidConfirmed ? '✓ 已轉帳' : `${from.name} 已轉帳`}
+                                </button>
+                                <button onClick={() => {
+                                  if (!iAmReceiver || s.receivedConfirmed) return;
+                                  const newState = { ...s, receivedConfirmed: true };
+                                  setTransferStates(p => ({ ...p, [stateKey]: newState }));
+                                  if (newState.paidConfirmed) settleOne(t);
+                                }} className={`flex-1 py-2.5 rounded-2xl text-xs font-black border transition-all ${s.receivedConfirmed ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : iAmReceiver ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer' : 'bg-slate-50 text-slate-300 border-slate-100 cursor-default'}`}>
+                                  {s.receivedConfirmed ? '✓ 已收款' : `${to.name} 確認收款`}
+                                </button>
+                              </div>
+                            )}
+                            {bothConfirmed && <div className="text-center text-xs font-black text-emerald-500">✓ 已結清</div>}
+                            {!bothConfirmed && (
+                              <div className="text-center text-[10px] text-slate-300 mt-1.5">
+                                {!s.paidConfirmed && !s.receivedConfirmed && '雙方確認後自動結清'}
+                                {s.paidConfirmed && !s.receivedConfirmed && `等待 ${to.name} 確認收款`}
+                                {!s.paidConfirmed && s.receivedConfirmed && `等待 ${from.name} 確認轉帳`}
+                              </div>
                             )}
                           </div>
                         );
@@ -4265,57 +3388,91 @@ const WalletTab = ({ onDownload }) => {
                   )}
                 </section>
 
-                <div className="border-t border-slate-100" />
+                {/* 分隔線 */}
+                {(myReceivable.length > 0 || myPayable.length > 0) && <div className="border-t border-slate-100" />}
 
-                {/* 下：明細（全員）*/}
-                <section>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">📋 明細</p>
-                  {unsettledRecords.length === 0 ? (
-                    <p className="text-xs text-slate-400 text-center py-4">沒有未結清的分攤記錄</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {unsettledRecords.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(r => {
-                        const payer = memberMap[r.payerId];
-                        const receiver = memberMap[r.receiverId];
-                        if (!payer || !receiver) return null;
-                        const iAmPayer = r.payerId === currentMember?.id;
-                        const iAmReceiver = r.receiverId === currentMember?.id;
-                        const iAmInvolved = iAmPayer || iAmReceiver;
+                {/* 我的應收（只有我看得到）*/}
+                {myReceivable.length > 0 && (
+                  <section>
+                    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-3">💰 我的應收款</p>
+                    <div className="space-y-3">
+                      {myReceivable.map((t, idx) => {
+                        const member = memberMap[t.from];
+                        if (!member) return null;
+                        const originals = safeRecords.filter(r => r.payerId === currentMember?.id && r.receiverId === t.from);
+                        const byCur = {};
+                        originals.forEach(r => { byCur[r.currency] = (byCur[r.currency] || 0) + r.amount; });
                         return (
-                          <div key={r.id} className={`bg-white border rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm ${iAmPayer ? 'border-emerald-100' : iAmReceiver ? 'border-red-100' : 'border-slate-100'}`}>
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <Avatar member={payer} className="w-6 h-6 rounded-lg text-xs" />
-                              <span className="text-[10px] text-slate-300">→</span>
-                              <Avatar member={receiver} className="w-6 h-6 rounded-lg text-xs" />
+                          <div key={idx} className="bg-emerald-50 border border-emerald-100 rounded-3xl p-4">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Avatar member={member} className="w-8 h-8 rounded-xl text-sm" />
+                              <div className="flex-1">
+                                <div className="text-sm font-black text-slate-800">{member.name} 要還我</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  {Object.entries(byCur).map(([cur, amt]) => `${SYM[cur]}${amt.toLocaleString()}（≈ NT$${toTWD(amt, cur).toLocaleString()}）`).join('・')}
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-black text-slate-700 truncate">{r.note || '分攤'}</p>
-                              <p className="text-[10px] text-slate-400 mt-0.5">
-                                {iAmPayer ? `${receiver.name} 欠我` : iAmReceiver ? `我欠 ${payer.name}` : `${receiver.name} 欠 ${payer.name}`}
-                                ・{SYM[r.currency]}{r.amount.toLocaleString()}
-                              </p>
-                            </div>
-                            {iAmInvolved && (
-                              <button onClick={() => settleRecord(r)}
-                                className={`flex-shrink-0 px-2.5 py-1.5 rounded-xl text-[10px] font-black border active:scale-95 transition-all
-                                  ${iAmPayer ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>
-                                {iAmPayer ? '收款' : '還款'}
-                              </button>
-                            )}
+                            {originals.map(r => (
+                              <div key={r.id} className="flex items-center gap-2 py-1.5 border-t border-emerald-100">
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                                <span className="flex-1 text-xs text-slate-500">{r.note}</span>
+                                <span className="text-xs font-bold text-emerald-600">{SYM[r.currency]}{r.amount.toLocaleString()} {r.currency}</span>
+                              </div>
+                            ))}
                           </div>
                         );
                       })}
                     </div>
-                  )}
-                </section>
+                  </section>
+                )}
+
+                {/* 我的應付（只有我看得到）*/}
+                {myPayable.length > 0 && (
+                  <section>
+                    <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-3">💸 我的應付款</p>
+                    <div className="space-y-3">
+                      {myPayable.map((t, idx) => {
+                        const member = memberMap[t.to];
+                        if (!member) return null;
+                        const originals = safeRecords.filter(r => r.payerId === t.to && r.receiverId === currentMember?.id);
+                        const byCur = {};
+                        originals.forEach(r => { byCur[r.currency] = (byCur[r.currency] || 0) + r.amount; });
+                        return (
+                          <div key={idx} className="bg-red-50 border border-red-100 rounded-3xl p-4">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Avatar member={member} className="w-8 h-8 rounded-xl text-sm" />
+                              <div className="flex-1">
+                                <div className="text-sm font-black text-slate-800">我要還 {member.name}</div>
+                                <div className="text-[10px] text-slate-500 mt-0.5">
+                                  {Object.entries(byCur).map(([cur, amt]) => `${SYM[cur]}${amt.toLocaleString()}（≈ NT$${toTWD(amt, cur).toLocaleString()}）`).join('・')}
+                                </div>
+                              </div>
+                            </div>
+                            {originals.map(r => (
+                              <div key={r.id} className="flex items-center gap-2 py-1.5 border-t border-red-100">
+                                <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
+                                <span className="flex-1 text-xs text-slate-500">{r.note}</span>
+                                <span className="text-xs font-bold text-red-500">{SYM[r.currency]}{r.amount.toLocaleString()} {r.currency}</span>
+                              </div>
+                            ))}
+                            <div className="mt-2 py-2 bg-amber-50 border border-amber-100 rounded-2xl text-center text-[10px] font-bold text-amber-600">
+                              等 {member.name} 確認收款後結清
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
               </div>
             </div>
           </div>
         );
       })() : null}
 
-      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => { confirmDel?.fn(); setConfirmDel(null); }} />
-      <ConfirmDialog isOpen={!!dateConfirmDel} onClose={() => setDateConfirmDel(null)} onConfirm={() => { dateConfirmDel?.fn(); setDateConfirmDel(null); }} title="確認刪除日期與帳目" message="此操作將會刪除該日期頁籤，並且清空底下所有的帳務紀錄，確定要刪除嗎？" />
+      <ConfirmDialog isOpen={!!confirmDel} onClose={() => setConfirmDel(null)} onConfirm={() => confirmDel?.fn()} />
+      <ConfirmDialog isOpen={!!dateConfirmDel} onClose={() => setDateConfirmDel(null)} onConfirm={() => dateConfirmDel?.fn()} title="確認刪除日期與帳目" message="此操作將會刪除該日期頁籤，並且清空底下所有的帳務紀錄，確定要刪除嗎？" />
     </div>
   );
 };
@@ -4340,17 +3497,8 @@ const ListTab = ({ onDownload }) => {
   useEffect(() => {
     onDownload(() => () => {
       let text = `${subTab}\n\n`;
-      const rows = [['狀態', '項目', '備註']];
-      sortedTodos.forEach(i => {
-        if (!i) return;
-        rows.push([
-          i.status ? '已完成' : '未完成',
-          i.content || '',
-          i.note || '',
-        ]);
-      });
-      const label = subTab === '共用清單' ? '共用待辦' : '個人待辦';
-      downloadCSV(rows, `待辦_${label}_${new Date().toLocaleDateString('zh-TW')}`);
+      sortedTodos.forEach(i => { if (i) text += `[${i.status ? 'V' : ' '}] ${i.content}\n`; if (i?.note) text += `備註: ${i.note}\n`; text += '--\n'; });
+      downloadTextFile(text, `List_${subTab}`);
     });
   }, [sortedTodos, subTab, onDownload]);
 
@@ -4461,14 +3609,8 @@ const NotesTab = ({ onDownload }) => {
   useEffect(() => {
     onDownload(() => () => {
       let text = `${subTab}\n\n`;
-      // CSV 格式，只下載自己的記事
-      const rows = [['日期', '內容']];
-      sortedNotes.forEach(i => {
-        if (!i) return;
-        rows.push([i.date || '', i.content || '']);
-      });
-      const label = subTab === '共用記事' ? '共用記事' : '個人記事';
-      downloadCSV(rows, `記事_${label}_${new Date().toLocaleDateString('zh-TW')}`);
+      sortedNotes.forEach(i => { if (i) text += `[${i.date}] ${i.content}\n--\n`; });
+      downloadTextFile(text, `Notes_${subTab}`);
     });
   }, [sortedNotes, subTab, onDownload]);
 
@@ -4589,14 +3731,8 @@ const AuthScreen = () => {
 
 // ─── MainLayout ───────────────────────────────────────────────────────────────
 const MainLayout = () => {
-  const { currentMember, logout, allMembers, setAllMembers, updateMember,
-    globalItinerary, sharedWallet, personalWallet, sharedNotes, personalNotes,
-    allPersonalNotes, shoppingList, sharedTodos, customRates, setCustomRates } = useMember();
-  const { rates: autoRates, updatedAt } = useExchangeRates();
-  // 優先用自訂匯率，否則用即時匯率
-  const rates = { TWD: 1, JPY: customRates?.JPY || autoRates.JPY, KRW: customRates?.KRW || autoRates.KRW };
+  const { currentMember, logout, allMembers, setAllMembers, updateMember } = useMember();
   const [activeTab, setActiveTab] = useState('home');
-  const [foodHighlightId, setFoodHighlightId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const downloadTriggerRef = useRef(null);
@@ -4611,81 +3747,6 @@ const MainLayout = () => {
   const [newMemberName, setNewMemberName] = useState('');
   const [confirmDelMember, setConfirmDelMember] = useState(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
-  const [downloadChecks, setDownloadChecks] = useState({
-    trip: true, food: true, shopping: true,
-    sharedWallet: true, personalWallet: true,
-    sharedTodo: true, personalTodo: true,
-    sharedNotes: true, personalNotes: true,
-  });
-
-  const handleBatchDownload = () => {
-    const today = new Date().toLocaleDateString('zh-TW').replace(/\//g, '-');
-    const myWallet = Array.isArray(personalWallet) ? personalWallet : [];
-    const myNotes = Array.isArray(personalNotes) ? personalNotes : [];
-
-    // 收集所有要下載的檔案，然後依序延遲下載
-    const downloads = [];
-
-    if (downloadChecks.trip) {
-      const rows = [['日期', '時間', '名稱', '地點', '城市', '類別', '備註']];
-      const items = Array.isArray(globalItinerary) ? [...globalItinerary].sort((a, b) => (a.date || '').localeCompare(b.date || '')) : [];
-      items.forEach(i => rows.push([i.date||'', i.time||'', i.name||'', i.location||'', i.city||'', i.category||'', i.note||'']));
-      downloads.push({ rows, name: `行程_${today}` });
-    }
-    if (downloadChecks.food) {
-      const rows = [['名稱', '城市', '地區', '商場', '類型', '備註']];
-      const items = Array.isArray(globalItinerary) ? globalItinerary.filter(i => i.category === '美食') : [];
-      items.forEach(i => rows.push([i.name||'', i.city||'', i.district||'', i.mall||'', i.foodType||'', i.note||'']));
-      downloads.push({ rows, name: `美食_${today}` });
-    }
-    if (downloadChecks.shopping) {
-      const rows = [['名稱', '城市', '商場', '許願者', '狀態', '購買日期', '價格', '幣別', '備註']];
-      const items = Array.isArray(shoppingList) ? shoppingList : [];
-      items.forEach(i => {
-        const member = (allMembers||[]).find(m => m.id === i.memberId);
-        rows.push([i.name||'', i.city||'', i.mall||'', member?.name||'', i.isBought?'已買':'未買', i.boughtAt||'', i.price||'', i.currency||'', i.note||'']);
-      });
-      downloads.push({ rows, name: `購物清單_${today}` });
-    }
-    if (downloadChecks.sharedWallet) {
-      const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
-      const items = (Array.isArray(sharedWallet) ? sharedWallet : []).filter(i => i && !i.isSettlement);
-      items.forEach(i => rows.push([i.date||'', i.type||'', i.name||'', i.currency||'', i.amount||'', i.note||'']));
-      downloads.push({ rows, name: `帳務_共用錢包_${today}` });
-    }
-    if (downloadChecks.personalWallet) {
-      const rows = [['日期', '類型', '名稱', '幣別', '金額', '備註']];
-      myWallet.filter(i => i && !i.isSettlement && !i.isProxyRecord).forEach(i => rows.push([i.date||'', i.type||'', i.name||'', i.currency||'', i.amount||'', i.note||'']));
-      downloads.push({ rows, name: `帳務_個人記帳_${today}` });
-    }
-    if (downloadChecks.sharedTodo) {
-      const rows = [['狀態', '項目', '備註']];
-      const items = Array.isArray(sharedTodos) ? sharedTodos : [];
-      items.forEach(i => rows.push([i.status?'已完成':'未完成', i.content||'', i.note||'']));
-      downloads.push({ rows, name: `待辦_共用_${today}` });
-    }
-    if (downloadChecks.sharedNotes) {
-      const rows = [['日期', '內容']];
-      const items = Array.isArray(sharedNotes) ? sharedNotes : [];
-      items.forEach(i => rows.push([i.date||'', i.content||'']));
-      downloads.push({ rows, name: `記事_共用_${today}` });
-    }
-    if (downloadChecks.personalNotes) {
-      const rows = [['日期', '內容']];
-      myNotes.forEach(i => rows.push([i.date||'', i.content||'']));
-      downloads.push({ rows, name: `記事_個人_${today}` });
-    }
-
-    // 打包成 zip 下載
-    const todayForZip = new Date().toLocaleDateString('zh-TW').replace(/\//g, '-');
-    const files = downloads.map(d => ({
-      name: `${d.name}.csv`,
-      content: rowsToCSV(d.rows),
-    }));
-    if (files.length > 0) {
-      downloadZip(files, `旅遊資料_${todayForZip}`);
-    }
-  };
 
   const tabs = [
     { id: 'trip', label: '行程', icon: Map, color: 'text-blue-500', activeBg: 'bg-blue-500' },
@@ -4717,18 +3778,24 @@ const MainLayout = () => {
           <span className="text-sm font-black text-slate-700 max-w-[80px] truncate tracking-wide">{currentMember?.name}</span>
         </button>
 
-        <div className="absolute left-1/2 -translate-x-1/2">
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
           <h1 className="text-lg font-black text-slate-800 tracking-wider whitespace-nowrap">旅遊小助理</h1>
+          {activeTab !== 'home' && (
+            <button onClick={() => downloadTriggerRef.current && downloadTriggerRef.current()} className="p-1 text-slate-400 hover:text-blue-500 active:scale-90 transition-colors">
+              <Download size={20} />
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setShowSettings(true)} className="p-1.5 text-slate-400 hover:text-slate-700 active:scale-90 transition-colors"><Settings size={24} /></button>
+          <button onClick={() => setConfirmLogout(true)} className="p-1.5 text-slate-400 hover:text-red-500 active:scale-90 transition-colors"><LogOut size={24} /></button>
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto relative no-scrollbar bg-slate-50">
         {activeTab === 'home' && <HomePage onNavigate={setActiveTab} />}
-        {activeTab === 'trip' && <TripPage onDownload={setDownloadTrigger} onNavigateToFood={(id) => { setFoodHighlightId(id); setActiveTab('food'); }} />}
-        {activeTab === 'food' && <FoodPage onDownload={setDownloadTrigger} highlightId={foodHighlightId} onClearHighlight={() => setFoodHighlightId(null)} />}
+        {activeTab === 'trip' && <TripPage onDownload={setDownloadTrigger} />}
+        {activeTab === 'food' && <FoodPage onDownload={setDownloadTrigger} />}
         {activeTab === 'shopping' && <ShoppingPage onDownload={setDownloadTrigger} />}
         {activeTab === 'list' && <ListTab onDownload={setDownloadTrigger} />}
         {activeTab === 'wallet' && <WalletTab onDownload={setDownloadTrigger} />}
@@ -4809,62 +3876,6 @@ const MainLayout = () => {
             </div>
           </div>
         )}
-        {/* 匯率設定 */}
-        <div className="mt-4 bg-slate-50 p-4 rounded-3xl border border-slate-100">
-          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 block">💱 匯率設定（手動覆蓋）</label>
-          <div className="space-y-2">
-            {['JPY', 'KRW'].map(cur => (
-              <div key={cur} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2 border border-slate-200">
-                <span className="text-xs font-black text-slate-600 w-8">1 {cur}</span>
-                <span className="text-xs text-slate-400">=</span>
-                <span className="text-xs text-slate-400">NT$</span>
-                <input
-                  type="number"
-                  step="0.001"
-                  value={rates[cur]}
-                  onChange={e => setCustomRates(prev => ({ ...prev, [cur]: parseFloat(e.target.value) || prev[cur] }))}
-                  className="flex-1 text-sm font-bold text-violet-600 bg-transparent outline-none"
-                />
-              </div>
-            ))}
-            <p className="text-[10px] text-slate-400 mt-1">{updatedAt}</p>
-          </div>
-        </div>
-
-        {/* 下載中心 */}
-        <div className="mt-4 bg-slate-50 p-4 rounded-3xl border border-slate-100">
-          <label className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3 block">⬇️ 下載中心</label>
-          <div className="space-y-2">
-            {[
-              { key: 'trip', label: '行程' },
-              { key: 'food', label: '美食' },
-              { key: 'shopping', label: '購物清單' },
-              { key: 'sharedWallet', label: '帳務 — 共用錢包' },
-              { key: 'personalWallet', label: '帳務 — 個人記帳' },
-              { key: 'sharedTodo', label: '待辦 — 共用' },
-              { key: 'personalTodo', label: '待辦 — 個人' },
-              { key: 'sharedNotes', label: '記事 — 共用' },
-              { key: 'personalNotes', label: '記事 — 個人' },
-            ].map(item => (
-              <label key={item.key} className="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-slate-200 cursor-pointer hover:bg-slate-50">
-                <input type="checkbox" checked={downloadChecks[item.key]}
-                  onChange={e => setDownloadChecks(p => ({ ...p, [item.key]: e.target.checked }))}
-                  className="w-4 h-4 accent-violet-500" />
-                <span className="text-sm font-bold text-slate-700">{item.label}</span>
-              </label>
-            ))}
-            <button onClick={() => { handleBatchDownload(); setShowSettings(false); }}
-              className="w-full mt-2 py-3 bg-violet-500 text-white rounded-2xl font-bold text-sm active:scale-95 hover:bg-violet-600 transition-colors">
-              下載選取項目
-            </button>
-          </div>
-        </div>
-
-        <button onClick={() => { setShowSettings(false); setConfirmLogout(true); }}
-          className="w-full mt-4 py-3 bg-red-50 text-red-500 border border-red-200 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 hover:bg-red-100 active:scale-95 transition-all">
-          <LogOut size={16} />
-          登出
-        </button>
       </Modal>
 
       <ConfirmDialog isOpen={!!confirmDelMember} onClose={() => setConfirmDelMember(null)} onConfirm={() => confirmDelMember?.fn()} title={`刪除成員 ${confirmDelMember?.name}`} message="確定要將此成員從團隊中移除嗎？" />
