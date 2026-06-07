@@ -3834,17 +3834,17 @@ const WalletTab = ({ onDownload }) => {
           if ((modal.data.splitMembers || []).length > 0 && modal.data.amount && !allExistingSettled) {
             const splitMembers = modal.data.splitMembers;
             const selfIncluded = modal.data.splitIncludeSelf !== false;
-            const totalAmt = Number(modal.data.amount) || 0;
+            const splitTotalAmt = Number(modal.data.amount) || 0;
             const selfAmtRaw = modal.data.selfAmount;
             const selfHasCustom = selfAmtRaw !== '' && selfAmtRaw !== undefined && selfAmtRaw !== null && !isNaN(Number(selfAmtRaw)) && Number(selfAmtRaw) > 0;
             const selfCustomAmt = selfHasCustom ? Number(selfAmtRaw) : 0;
-            const filledSum = splitMembers.reduce((s, m) => s + (Number(m.amount) || 0), 0);
-            const filledSumWithSelf = filledSum + (selfHasCustom ? selfCustomAmt : 0);
+            const splitFilledSum = splitMembers.reduce((s, m) => s + (Number(m.amount) || 0), 0);
+            const filledSumWithSelf = splitFilledSum + (selfHasCustom ? selfCustomAmt : 0);
             const unfilledOthers = splitMembers.filter(m => !m.amount).length;
             const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
-            const remaining = Math.max(0, totalAmt - filledSumWithSelf);
-            const perUnfilled = unfilledCount > 0 ? Math.round((remaining / unfilledCount) * 10) / 10 : 0;
-            const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled) : 0;
+            const splitRemaining = Math.max(0, splitTotalAmt - filledSumWithSelf);
+            const splitPerUnfilled = unfilledCount > 0 ? Math.round((splitRemaining / unfilledCount) * 10) / 10 : 0;
+            const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : splitPerUnfilled) : 0;
             const savedItem = { ...cleanData, id: walletItemId };
 
             // 如果是編輯，先清除舊的未結清 splitRecords（已結清的保留）
@@ -3866,7 +3866,7 @@ const WalletTab = ({ onDownload }) => {
             }
 
             const newRecords = splitMembers.map((entry, idx) => {
-              const memberAmt = Number(entry.amount) || perUnfilled;
+              const memberAmt = Number(entry.amount) || splitPerUnfilled;
               const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
               return {
                 id: now + idx + 100,
@@ -3895,7 +3895,7 @@ const WalletTab = ({ onDownload }) => {
               splitMembers.forEach((entry, idx) => {
                 const memberId = entry.id;
                 if (deletedReceiverIds.has(memberId)) return;
-                const memberAmt = Number(entry.amount) || perUnfilled || Math.round(totalAmt / (splitMembers.length + 1));
+                const memberAmt = Number(entry.amount) || splitPerUnfilled || Math.round(splitTotalAmt / (splitMembers.length + 1));
                 const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
                 const proxyRecord = {
                   id: now + idx + 200,
