@@ -3599,9 +3599,15 @@ const WalletTab = ({ onDownload }) => {
               const filledSumWithSelf = filledSum + (selfHasCustom ? selfCustomAmt : 0);
               const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
               const remaining = Math.max(0, totalAmt - filledSumWithSelf);
-              const perUnfilled = unfilledCount > 0 ? Math.round((remaining / unfilledCount) * 10) / 10 : 0;
-              const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled) : 0;
-              const actualTotal = filledSumWithSelf + myAmt + unfilledOthers * perUnfilled;
+              const perUnfilled = unfilledCount > 0 ? Math.floor(remaining / unfilledCount) : 0;
+              const splitRemainder = remaining - perUnfilled * unfilledCount;
+              // 餘數分給前 splitRemainder 個未填的人（每人多 1）
+              const myUnfilledIdx = selfIncluded && !selfHasCustom ? 0 : -1;
+              const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : perUnfilled + (myUnfilledIdx < splitRemainder ? 1 : 0)) : 0;
+              const actualTotal = filledSumWithSelf + myAmt + splitMembers.filter(m => m.amount === '' || isNaN(Number(m.amount))).reduce((s, _, i) => {
+                const idx = (selfIncluded && !selfHasCustom) ? i + 1 : i;
+                return s + perUnfilled + (idx < splitRemainder ? 1 : 0);
+              }, 0);
               const isOver = actualTotal > totalAmt + 1;
               const isUnder = totalAmt > 0 && actualTotal < totalAmt - 1;
               return (
