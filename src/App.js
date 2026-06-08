@@ -3912,17 +3912,16 @@ const WalletTab = ({ onDownload }) => {
             setSplitRecords(p => [...(Array.isArray(p) ? p : []), ...newRecords]);
 
             // 同時寫一筆代墊記錄進被分攤者的 wallet
-            // 跳過已 deletedByReceiver 的人（他刪了不要再加回來）
-            const deletedReceiverIds = new Set(
-              (Array.isArray(splitRecords) ? splitRecords : [])
-                .filter(r => String(r.walletItemId) === String(walletItemId) && r.deletedByReceiver)
-                .map(r => r.receiverId)
-            );
+            // 重新儲存時清掉所有 deletedByReceiver 標記，讓所有人重新加入
+            setSplitRecords(p => (Array.isArray(p) ? p : []).map(r =>
+              String(r.walletItemId) === String(walletItemId) && r.deletedByReceiver
+                ? { ...r, deletedByReceiver: false, isSettled: false, settledAt: null }
+                : r
+            ));
             setAllPersonalWallets(prev => {
               const next = { ...prev };
               splitMembers.forEach((entry, idx) => {
                 const memberId = entry.id;
-                if (deletedReceiverIds.has(memberId)) return;
                 const unfilledIdx2 = splitMembers.filter(m => !m.amount).indexOf(entry);
               const memberAmt = Number(entry.amount) || (splitPerUnfilled + (unfilledIdx2 >= 0 && (unfilledIdx2 + (selfIncluded && !selfHasCustom ? 1 : 0)) < splitRemainder2 ? 1 : 0));
                 const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
