@@ -3870,8 +3870,9 @@ const WalletTab = ({ onDownload }) => {
             const unfilledOthers = splitMembers.filter(m => !m.amount).length;
             const unfilledCount = unfilledOthers + (selfIncluded && !selfHasCustom ? 1 : 0);
             const splitRemaining = Math.max(0, splitTotalAmt - filledSumWithSelf);
-            const splitPerUnfilled = unfilledCount > 0 ? Math.round((splitRemaining / unfilledCount) * 10) / 10 : 0;
-            const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : splitPerUnfilled) : 0;
+            const splitPerUnfilled = unfilledCount > 0 ? Math.floor(splitRemaining / unfilledCount) : 0;
+            const splitRemainder2 = splitRemaining - splitPerUnfilled * unfilledCount;
+            const myAmt = selfIncluded ? (selfHasCustom ? selfCustomAmt : splitPerUnfilled + (0 < splitRemainder2 ? 1 : 0)) : 0;
             const savedItem = { ...cleanData, id: walletItemId };
 
             // 如果是編輯，先清除舊的未結清 splitRecords（已結清的保留）
@@ -3922,7 +3923,8 @@ const WalletTab = ({ onDownload }) => {
               splitMembers.forEach((entry, idx) => {
                 const memberId = entry.id;
                 if (deletedReceiverIds.has(memberId)) return;
-                const memberAmt = Number(entry.amount) || splitPerUnfilled || Math.round(splitTotalAmt / (splitMembers.length + 1));
+                const unfilledIdx2 = splitMembers.filter(m => !m.amount).indexOf(entry);
+              const memberAmt = Number(entry.amount) || (splitPerUnfilled + (unfilledIdx2 >= 0 && (unfilledIdx2 + (selfIncluded && !selfHasCustom ? 1 : 0)) < splitRemainder2 ? 1 : 0));
                 const memberAmtSafe = isNaN(memberAmt) ? 0 : memberAmt;
                 const proxyRecord = {
                   id: now + idx + 200,
